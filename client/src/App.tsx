@@ -204,9 +204,18 @@ export default function App(): JSX.Element {
     socketRef.current?.emit("start_game");
   };
 
+  const copyInviteLink = useCallback(() => {
+    void navigator.clipboard?.writeText(window.location.href);
+  }, []);
+
   const leaderboard = snapshot?.leaderboard ?? [];
 
   const playerCount = snapshot?.room.players.length ?? 0;
+
+  const needsMorePlayers =
+    playerCount < 2 &&
+    snapshot &&
+    (snapshot.room.phase === "countdown" || snapshot.room.phase === "waiting");
 
   /** Seat order matches the “Table” list: pass goes to the player listed next after you (wraps last → first). */
   const passTargetName = useMemo(() => {
@@ -308,9 +317,47 @@ export default function App(): JSX.Element {
             </div>
             {snapshot.room.phase === "countdown" && lobbyMs !== null && (
               <div className="countdown-banner">
-                Next deal in&nbsp;
-                <span>{formatRemaining(lobbyMs)}</span>
-                &nbsp;— or any player can start now if at least two people are seated.
+                {playerCount < 2 ? (
+                  <>
+                    Lobby timer: <span>{formatRemaining(lobbyMs)}</span>
+                    &nbsp;— cards cannot deal until <strong>at least two people</strong> join this room.
+                  </>
+                ) : (
+                  <>
+                    Next deal in&nbsp;
+                    <span>{formatRemaining(lobbyMs)}</span>
+                    &nbsp;— or tap <strong>Start game now</strong> below when everyone is ready.
+                  </>
+                )}
+              </div>
+            )}
+            {needsMorePlayers && (
+              <div className="solo-callout" role="region" aria-label="What to do while waiting">
+                <div className="solo-callout-title">What you should do right now</div>
+                <p className="solo-callout-lead">
+                  You are <strong>alone</strong> at this table. Family SHOW needs <strong>two or more players</strong>{" "}
+                  before anyone gets cards.
+                </p>
+                <ol className="solo-steps">
+                  <li>
+                    Tap <strong>Copy invite link</strong> (below or here) and send it on WhatsApp, SMS, or email.
+                  </li>
+                  <li>
+                    Others open the link, type the <strong>same room phrase</strong> as you (<strong>{roomName}</strong>
+                    ), enter their name, and tap <strong>Enter arena</strong>.
+                  </li>
+                  <li>
+                    When a second person arrives, the <strong>Start game now</strong> button appears — use it to begin
+                    early, or wait for this timer to finish.
+                  </li>
+                </ol>
+                <p className="solo-callout-note">
+                  If the timer reaches zero while you are still alone, nothing deals yet — keep sharing the link until
+                  someone joins.
+                </p>
+                <button type="button" className="primary solo-copy-btn" onClick={copyInviteLink}>
+                  Copy invite link
+                </button>
               </div>
             )}
             {(snapshot.room.phase === "countdown" || snapshot.room.phase === "waiting") &&
@@ -332,10 +379,9 @@ export default function App(): JSX.Element {
                   : "Hands are closed — leaderboard is final for this SHOW."}
               </p>
             )}
-            {snapshot.room.phase === "countdown" && (
+            {snapshot.room.phase === "countdown" && playerCount >= 2 && (
               <p className="meta">
-                Waiting for the deal — invite others with the link below. Cards appear after the timer or Start
-                game now.
+                Everyone is in — use <strong>Start game now</strong> when you are ready, or wait for the timer.
               </p>
             )}
             {snapshot.room.phase === "passing" && (
@@ -345,16 +391,21 @@ export default function App(): JSX.Element {
                 </div>
                 <ol className="pass-steps">
                   <li>
-                    <strong>Tap exactly one card</strong> in your hand below (only one tap counts).
+                    <strong>Tap exactly one card</strong> below (only one tap counts). That card is{" "}
+                    <strong>given to the next player</strong> — it is <em>not</em> thrown away or removed from play.
                   </li>
                   <li>
-                    That card is <strong>passed</strong> to{" "}
-                    <strong>{passTargetName ?? "the next player"}</strong> — the person listed{" "}
-                    <em>after your name</em> in the table order below (the last seat passes to the first).
+                    It goes to <strong>{passTargetName ?? "the next player"}</strong> — whoever appears{" "}
+                    <em>right after your name</em> in the table list (the last player passes to the first).
                   </li>
                   <li>
-                    After <em>everyone</em> has chosen, cards move at once. The game then applies matching /
-                    discard rules for you — you are not picking discards manually on this screen.
+                    This table picks passes <strong>all at once</strong>: when the round closes, each player sends one
+                    card forward and receives one from behind. So if everyone held four cards,{" "}
+                    <strong>everyone still has four</strong> after the swap (same with 2 people or 10).
+                  </li>
+                  <li>
+                    Only <em>after</em> that swap does the game apply matching rules (pairs, four-of-a-kind, etc.). You
+                    never “discard into the bin” by tapping — you only choose what to pass along.
                   </li>
                 </ol>
                 <p className="pass-goal">
@@ -396,15 +447,23 @@ export default function App(): JSX.Element {
             <h3 style={{ marginBottom: 4, fontSize: "1rem" }}>
               {snapshot.room.phase === "passing"
                 ? "Your cards — tap one to pass"
-                : "Your hand"}
+                : snapshot.room.phase === "countdown"
+                  ? "Your cards (not dealt yet)"
+                  : "Your hand"}
             </h3>
+            {snapshot.room.phase === "countdown" && snapshot.myHand.length === 0 && (
+              <p className="empty-hand-hint">
+                Nothing here until the hand starts — invite players above, then cards appear for everyone at once.
+              </p>
+            )}
             {snapshot.room.phase === "passing" && passTargetName && (
               <p className="meta hand-hint">
                 Pass destination this round: <strong>{passTargetName}</strong>
               </p>
             )}
 
-            {(snapshot.room.phase === "passing" || snapshot.room.phase === "countdown") && (
+            {(snapshot.room.phase === "passing" ||
+              (snapshot.room.phase === "countdown" && snapshot.myHand.length > 0)) && (
               <div
                 className={`hand ${snapshot.room.phase === "passing" && waitingPass ? "hand--locked" : ""}`}
               >
@@ -478,7 +537,7 @@ export default function App(): JSX.Element {
             >
               Show
             </button>
-            <button type="button" onClick={() => navigator.clipboard?.writeText(window.location.href)}>
+            <button type="button" onClick={copyInviteLink}>
               Copy invite link
             </button>
           </div>

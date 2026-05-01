@@ -36,7 +36,8 @@ export interface RoomSnapshot {
 
 const LOBBY_MS = 2 * 60 * 1000;
 const MIN_PLAYERS = 2;
-const PASS_MS = 45 * 1000;
+/** Time each player has to pick a card to pass each round. */
+const PASS_MS = 10 * 1000;
 
 function shuffle<T>(arr: T[], rng: () => number): T[] {
   const a = [...arr];
