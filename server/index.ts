@@ -146,6 +146,23 @@ async function bootstrap(): Promise<void> {
       },
     );
 
+    socket.on("start_game", () => {
+      const key = socket.data.roomKey as string | undefined;
+      const playerId = socket.data.playerId as string | undefined;
+      if (!key || playerId === undefined) return;
+      const room = rooms.get(key);
+      if (!room) return;
+      const ok = room.requestStartGame(playerId);
+      if (!ok) {
+        socket.emit(
+          "error_msg",
+          "Cannot start yet — need at least two players seated (or the match already began).",
+        );
+        return;
+      }
+      broadcastRoom(room, io);
+    });
+
     socket.on("pass_card", ({ cardIndex }: { cardIndex: number }) => {
       const key = socket.data.roomKey as string | undefined;
       const playerId = socket.data.playerId as string | undefined;

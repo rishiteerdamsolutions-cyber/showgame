@@ -270,6 +270,20 @@ export class GameRoom {
     if (p) p.socketId = null;
   }
 
+  /**
+   * Any seated player may skip the lobby timer once at least two players are at the table.
+   * If nobody taps start, `tick()` still auto-deals when the two-minute window ends.
+   */
+  requestStartGame(playerId: string): boolean {
+    const okPhase = this.phase === "countdown" || this.phase === "waiting";
+    if (!okPhase) return false;
+    if (this.seats.length < MIN_PLAYERS) return false;
+    if (!this.seats.some((s) => s.id === playerId)) return false;
+    this.countdownEndsAt = null;
+    this.dealAndBegin();
+    return true;
+  }
+
   tick(now: number): "started" | "pass_round" | "none" {
     if (
       this.phase === "countdown" &&

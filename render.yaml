@@ -1,0 +1,14 @@
+# Optional: deploy this service on Render so you get a public URL for Socket.IO.
+# New → Blueprint → connect repo, or Web Service with:
+# Build: npm install && npm run build
+# Start: NODE_ENV=production npm start
+services:
+  - type: web
+    name: showgame-api
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: NODE_ENV=production npm start
+    envVars:
+      - key: NODE_VERSION
+        value: "20"

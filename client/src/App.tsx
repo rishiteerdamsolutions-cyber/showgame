@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { io } from "socket.io-client";
+import { io, type Socket } from "socket.io-client";
 import { playCardShow, playShow, resumeAudio } from "./audio.ts";
 
 type CardModel = { id: string; name: string };
@@ -29,7 +29,16 @@ const LS_NAME = "showgame:name";
 const LS_ROOM = "showgame:room";
 const LS_PID = "showgame:playerId";
 
-const SOCKET_URL = import.meta.env.DEV ? "http://127.0.0.1:3001" : "";
+/**
+ * Production builds must set VITE_SOCKET_URL to wherever Node runs `server/index.ts` (Render, Railway, Fly, VPS…).
+ * Vercel serves only static HTML/JS — it cannot host Socket.IO, so never leave this unset in prod or the browser will try same-origin `showgame.vercel.app` and fail WebSocket upgrades.
+ */
+const REALTIME_URL =
+  import.meta.env.DEV
+    ? "http://127.0.0.1:3001"
+    : (import.meta.env.VITE_SOCKET_URL as string | undefined)?.trim() || null;
+
+const MISSING_REALTIME = import.meta.env.PROD && REALTIME_URL === null;
 
 function pad2(n: number): string {
   return n.toString().padStart(2, "0");
@@ -44,11 +53,7 @@ function formatRemaining(ms: number): string {
 }
 
 export default function App(): JSX.Element {
-  const socketRef = useRef(
-    SOCKET_URL !== ""
-      ? io(SOCKET_URL, { transports: ["websocket"], path: "/socket.io" })
-      : io({ transports: ["websocket"], path: "/socket.io", autoConnect: true }),
-  );
+  const socketRef = useRef<Socket | null>(null);
 
   const [name, setName] = useState(() => window.localStorage.getItem(LS_NAME) ?? "");
   const [roomName, setRoomName] = useState(
@@ -75,7 +80,14 @@ export default function App(): JSX.Element {
   }, [roomName]);
 
   useEffect(() => {
-    const s = socketRef.current;
+    if (MISSING_REALTIME || !REALTIME_URL) return;
+
+    const s = io(REALTIME_URL, {
+      path: "/socket.io",
+      transports: ["polling", "websocket"],
+      autoConnect: true,
+    });
+    socketRef.current = s;
 
     const onState = (p: ServerState) => {
       setSnapshot(p);
@@ -86,14 +98,21 @@ export default function App(): JSX.Element {
     };
 
     const onErr = (msg: string) => setError(msg);
+    const onConnectErr = () =>
+      setError(
+        "Cannot reach the realtime server. Check VITE_SOCKET_URL and that the API process is running.",
+      );
 
     s.on("state", onState);
     s.on("error_msg", onErr);
+    s.on("connect_error", onConnectErr);
 
     return () => {
       s.off("state", onState);
       s.off("error_msg", onErr);
+      s.off("connect_error", onConnectErr);
       s.disconnect();
+      socketRef.current = null;
     };
   }, []);
 
@@ -117,28 +136,34 @@ export default function App(): JSX.Element {
     }
   }, [snapshot]);
 
+  /** Recomputed every tick so lobby / pass timers visibly count down (not frozen in useMemo). */
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setTick((n) => n + 1), 250);
+    return () => window.clearInterval(id);
+  }, []);
+
   const lobbyMs = useMemo(() => {
     if (!snapshot?.room.countdownEndsAt || snapshot.room.phase !== "countdown") {
       return null;
     }
     return snapshot.room.countdownEndsAt - Date.now();
-  }, [snapshot]);
+  }, [snapshot, tick]);
 
   const passMs = useMemo(() => {
     if (!snapshot?.room.passDeadlineAt || snapshot.room.phase !== "passing") {
       return null;
     }
     return snapshot.room.passDeadlineAt - Date.now();
-  }, [snapshot]);
-
-  /** Live countdown ticking */
-  const [, bump] = useState(0);
-  useEffect(() => {
-    const t = window.setInterval(() => bump((x) => x + 1), 480);
-    return () => window.clearInterval(t);
-  }, []);
+  }, [snapshot, tick]);
 
   const join = useCallback(() => {
+    if (MISSING_REALTIME || !socketRef.current) {
+      setError(
+        "Deploy error: set environment variable VITE_SOCKET_URL in Vercel to your Game API URL (where Node + Socket.IO runs).",
+      );
+      return;
+    }
     setError(null);
     const pid = window.localStorage.getItem(LS_PID);
     socketRef.current.emit("join", {
@@ -158,20 +183,26 @@ export default function App(): JSX.Element {
 
   const onPickCard = (index: number) => {
     if (!snapshot || snapshot.room.phase !== "passing") return;
-    socketRef.current.emit("pass_card", { cardIndex: index });
+    socketRef.current?.emit("pass_card", { cardIndex: index });
     setWaitingPass(true);
   };
 
   const onShowTap = async () => {
     await resumeAudio();
-    socketRef.current.emit("show_claim");
+    socketRef.current?.emit("show_claim");
   };
 
   const onPlayAgain = () => {
-    socketRef.current.emit("play_again");
+    socketRef.current?.emit("play_again");
+  };
+
+  const onStartGameNow = () => {
+    socketRef.current?.emit("start_game");
   };
 
   const leaderboard = snapshot?.leaderboard ?? [];
+
+  const playerCount = snapshot?.room.players.length ?? 0;
 
   return (
     <div className="app">
@@ -185,6 +216,26 @@ export default function App(): JSX.Element {
                 : "We have a full family SHOW — congratulations to the caller."}
             </p>
           </div>
+        </div>
+      )}
+
+      {MISSING_REALTIME && (
+        <div
+          role="alert"
+          className="panel"
+          style={{
+            marginBottom: 16,
+            borderColor: "rgba(255,110,120,0.5)",
+            background: "rgba(80,20,30,0.35)",
+          }}
+        >
+          <strong>Realtime server not configured for this build.</strong>
+          <p className="meta" style={{ marginBottom: 0 }}>
+            In the Vercel project, add <code>VITE_SOCKET_URL</code> pointing to your deployed Node API (same
+            codebase, <code>server/index.ts</code> on Render / Railway / Fly / a VPS). Example:{" "}
+            <code>https://showgame-api.onrender.com</code> — no trailing slash. Redeploy after saving. Vercel
+            cannot host Socket.IO; only the static UI runs there.
+          </p>
         </div>
       )}
 
@@ -219,7 +270,7 @@ export default function App(): JSX.Element {
             <button
               className="primary"
               type="button"
-              disabled={name.trim().length === 0}
+              disabled={name.trim().length === 0 || MISSING_REALTIME}
               onClick={join}
             >
               Enter arena
@@ -244,10 +295,23 @@ export default function App(): JSX.Element {
             </div>
             {snapshot.room.phase === "countdown" && lobbyMs !== null && (
               <div className="countdown-banner">
-                Family gate opens automatically in&nbsp;
+                Next deal in&nbsp;
                 <span>{formatRemaining(lobbyMs)}</span>
+                &nbsp;— or any player can start now if at least two people are seated.
               </div>
             )}
+            {(snapshot.room.phase === "countdown" || snapshot.room.phase === "waiting") &&
+              playerCount >= 2 && (
+                <div style={{ marginTop: 14 }}>
+                  <button type="button" className="primary" onClick={onStartGameNow}>
+                    Start game now
+                  </button>
+                  <p className="meta" style={{ marginTop: 8, marginBottom: 0 }}>
+                    If nobody taps this, the table still opens automatically when the two-minute lobby timer
+                    finishes.
+                  </p>
+                </div>
+              )}
             {(snapshot.room.phase === "waiting" || snapshot.room.phase === "game_over") && (
               <p className="meta">
                 {snapshot.room.phase === "waiting"
@@ -255,12 +319,17 @@ export default function App(): JSX.Element {
                   : "Hands are closed — leaderboard is final for this SHOW."}
               </p>
             )}
-            {(snapshot.room.phase === "passing" || snapshot.room.phase === "countdown") && (
+            {snapshot.room.phase === "countdown" && (
+              <p className="meta">
+                Waiting for the deal — invite others with the link below. Cards appear after the timer or Start
+                game now.
+              </p>
+            )}
+            {snapshot.room.phase === "passing" && (
               <p className="meta">
                 Round&nbsp;
                 <strong>{snapshot.room.round}</strong>
-                · passes move clockwise · tap a tile to tuck that strip into the neighbour on your left in the
-                table order above.
+                · passes move clockwise · tap a tile to pass that card to the next player in table order.
               </p>
             )}
             {snapshot.room.phase === "passing" && passMs !== null && (
