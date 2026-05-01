@@ -182,10 +182,14 @@ export default function App(): JSX.Element {
   }, [snapshot]);
 
   const onPickCard = (index: number) => {
-    if (!snapshot || snapshot.room.phase !== "passing") return;
+    if (!snapshot || snapshot.room.phase !== "passing" || waitingPass) return;
     socketRef.current?.emit("pass_card", { cardIndex: index });
     setWaitingPass(true);
   };
+
+  useEffect(() => {
+    if (snapshot?.room.phase !== "passing") setWaitingPass(false);
+  }, [snapshot?.room.phase]);
 
   const onShowTap = async () => {
     await resumeAudio();
@@ -203,6 +207,15 @@ export default function App(): JSX.Element {
   const leaderboard = snapshot?.leaderboard ?? [];
 
   const playerCount = snapshot?.room.players.length ?? 0;
+
+  /** Seat order matches the “Table” list: pass goes to the player listed next after you (wraps last → first). */
+  const passTargetName = useMemo(() => {
+    if (!snapshot?.room.selfId || snapshot.room.players.length < 2) return null;
+    const seats = snapshot.room.players;
+    const i = seats.findIndex((p) => p.id === snapshot.room.selfId);
+    if (i < 0) return null;
+    return seats[(i + 1) % seats.length]?.name ?? null;
+  }, [snapshot]);
 
   return (
     <div className="app">
@@ -326,22 +339,46 @@ export default function App(): JSX.Element {
               </p>
             )}
             {snapshot.room.phase === "passing" && (
-              <p className="meta">
-                Round&nbsp;
-                <strong>{snapshot.room.round}</strong>
-                · passes move clockwise · tap a tile to pass that card to the next player in table order.
-              </p>
+              <div className="pass-callout" role="region" aria-label="Pass instructions">
+                <div className="pass-callout-title">
+                  Round {snapshot.room.round} · Pass one card
+                </div>
+                <ol className="pass-steps">
+                  <li>
+                    <strong>Tap exactly one card</strong> in your hand below (only one tap counts).
+                  </li>
+                  <li>
+                    That card is <strong>passed</strong> to{" "}
+                    <strong>{passTargetName ?? "the next player"}</strong> — the person listed{" "}
+                    <em>after your name</em> in the table order below (the last seat passes to the first).
+                  </li>
+                  <li>
+                    After <em>everyone</em> has chosen, cards move at once. The game then applies matching /
+                    discard rules for you — you are not picking discards manually on this screen.
+                  </li>
+                </ol>
+                <p className="pass-goal">
+                  Goal: end up with <strong>four cards with the same name</strong> to win the hand.
+                </p>
+              </div>
             )}
             {snapshot.room.phase === "passing" && passMs !== null && (
-              <div className="meta">
-                Passing window resets in <strong>{formatRemaining(passMs)}</strong>.
-                {waitingPass && " Waiting for cousins who have not tapped yet..."}
+              <div className="meta pass-timer-line">
+                Time left to choose:&nbsp;
+                <strong>{formatRemaining(passMs)}</strong>
+                {waitingPass ? (
+                  <span className="pass-status waiting">
+                    · You locked in your card — waiting for everyone else…
+                  </span>
+                ) : (
+                  <span className="pass-status pick"> · Tap a card below when you are ready.</span>
+                )}
               </div>
             )}
           </section>
 
           <section className="panel">
-            <h2 style={{ marginTop: 0, fontSize: "1.2rem" }}>Table</h2>
+            <h2 style={{ marginTop: 0, fontSize: "1.2rem" }}>Table order (pass goes → next)</h2>
             <div className="players">
               {snapshot.room.players.map((p) => (
                 <div
@@ -356,19 +393,40 @@ export default function App(): JSX.Element {
               ))}
             </div>
 
-            <h3 style={{ marginBottom: 4, fontSize: "1rem" }}>Your hand</h3>
+            <h3 style={{ marginBottom: 4, fontSize: "1rem" }}>
+              {snapshot.room.phase === "passing"
+                ? "Your cards — tap one to pass"
+                : "Your hand"}
+            </h3>
+            {snapshot.room.phase === "passing" && passTargetName && (
+              <p className="meta hand-hint">
+                Pass destination this round: <strong>{passTargetName}</strong>
+              </p>
+            )}
 
             {(snapshot.room.phase === "passing" || snapshot.room.phase === "countdown") && (
-              <div className="hand">
+              <div
+                className={`hand ${snapshot.room.phase === "passing" && waitingPass ? "hand--locked" : ""}`}
+              >
                 {snapshot.myHand.map((c, idx) => (
                   <button
                     type="button"
                     key={c.id}
                     className="card"
-                    disabled={snapshot.room.phase !== "passing"}
+                    disabled={
+                      snapshot.room.phase !== "passing" || waitingPass
+                    }
                     onClick={() => onPickCard(idx)}
+                    aria-label={`Pass ${c.name} to ${passTargetName ?? "next player"}`}
                   >
-                    {c.name}
+                    <span className="card-name">{c.name}</span>
+                    <span className="card-action">
+                      {snapshot.room.phase === "passing"
+                        ? waitingPass
+                          ? "Locked in"
+                          : `Tap → ${passTargetName ?? "next"}`
+                        : "Deal opens soon"}
+                    </span>
                   </button>
                 ))}
               </div>
