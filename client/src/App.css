@@ -414,6 +414,11 @@ button.card5:disabled {
   font-size: 0.82rem !important;
   border-radius: 10px !important;
 }
+.sound-bgm-hint {
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
 
 .ghost-btn {
   margin-top: 8px;

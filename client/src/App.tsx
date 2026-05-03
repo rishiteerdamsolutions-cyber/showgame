@@ -6,10 +6,13 @@ import {
   getEffectiveSoundLevel,
   getSoundMuted,
   getSoundVolume,
+  playCardPassSound,
+  playCountdownTick,
   primeAudioPlayback,
   SOUND_SETTINGS_EVENT,
   setSoundMuted,
   setSoundVolume,
+  stopBackgroundMusic,
 } from "./audio";
 
 type CardModel = { id: string; name: string };
@@ -29,6 +32,7 @@ type RoomPayload = {
   winnerId?: string;
   playAgainIds: string[];
   playAgainQuorum: number;
+  passSinceDeal: number;
 };
 
 type ServerState = {
@@ -79,6 +83,10 @@ export default function App(): JSX.Element {
   } | null>(null);
   const flashKeyRef = useRef<string | null>(null);
   const [, setSoundUi] = useState(0);
+  const prevPassSinceRef = useRef(0);
+  const prevPassGenRef = useRef<number | null>(null);
+  const prevPassTimerSecRef = useRef<number | null>(null);
+  const prevLobbyTimerSecRef = useRef<number | null>(null);
 
   useEffect(() => { window.localStorage.setItem(LS_NAME, name); }, [name]);
   useEffect(() => { window.localStorage.setItem(LS_ROOM, roomName); }, [roomName]);
@@ -145,6 +153,55 @@ export default function App(): JSX.Element {
     if (!snapshot?.room.passDeadlineAt || snapshot.room.phase !== "passing") return null;
     return snapshot.room.passDeadlineAt - Date.now();
   }, [snapshot, tick]);
+
+  /** Pass timer: tick sound each time the displayed second drops */
+  useEffect(() => {
+    prevPassTimerSecRef.current = null;
+  }, [snapshot?.room.passDeadlineAt]);
+
+  useEffect(() => {
+    if (snapshot?.room.phase !== "passing" || passMs === null || passMs <= 0) return;
+    const sec = Math.ceil(passMs / 1000);
+    if (prevPassTimerSecRef.current !== null && sec < prevPassTimerSecRef.current) {
+      playCountdownTick();
+    }
+    prevPassTimerSecRef.current = sec;
+  }, [snapshot?.room.phase, snapshot?.room.passDeadlineAt, passMs, tick]);
+
+  /** Lobby timer: same countdown tick */
+  useEffect(() => {
+    prevLobbyTimerSecRef.current = null;
+  }, [snapshot?.room.countdownEndsAt]);
+
+  useEffect(() => {
+    if (snapshot?.room.phase !== "countdown" || lobbyMs === null || lobbyMs <= 0) return;
+    const sec = Math.ceil(lobbyMs / 1000);
+    if (prevLobbyTimerSecRef.current !== null && sec < prevLobbyTimerSecRef.current) {
+      playCountdownTick();
+    }
+    prevLobbyTimerSecRef.current = sec;
+  }, [snapshot?.room.phase, snapshot?.room.countdownEndsAt, lobbyMs, tick]);
+
+  /** Card pass whoosh — server increments passSinceDeal on every pass */
+  useEffect(() => {
+    if (!snapshot) return;
+    const gen = snapshot.generation;
+    const n = snapshot.room.passSinceDeal ?? 0;
+    if (prevPassGenRef.current !== gen) {
+      prevPassGenRef.current = gen;
+      prevPassSinceRef.current = n;
+      return;
+    }
+    if (snapshot.room.phase === "passing" && n > prevPassSinceRef.current) {
+      playCardPassSound();
+    }
+    prevPassSinceRef.current = n;
+  }, [snapshot]);
+
+  /** Stop BGM when leaving the arena */
+  useEffect(() => {
+    if (!joined) stopBackgroundMusic();
+  }, [joined]);
 
   const join = useCallback(() => {
     if (MISSING_REALTIME || !socketRef.current) {
@@ -277,6 +334,9 @@ export default function App(): JSX.Element {
           <button type="button" className="sound-prime" onClick={() => primeAudioPlayback()}>
             Enable audio
           </button>
+          <span className="sound-bgm-hint" title="Background loop uses half of your volume slider">
+            Table music ×½
+          </span>
         </div>
       )}
 

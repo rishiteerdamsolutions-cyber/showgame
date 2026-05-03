@@ -1,9 +1,12 @@
-/** MP3 cues from `client/public`: CARDSHOW.mp3, SHOW.mp3, WINNER.mp3 */
+/** Game audio: MP3s live in `client/public/` */
 
 const LS_VOL = "showgame:vol";
 const LS_MUTE = "showgame:mute";
 
 export const SOUND_SETTINGS_EVENT = "showgame-sound";
+
+/** Background music is mixed at 50% of the master level (see syncBackgroundMusic). */
+export const BGM_LEVEL = 0.5;
 
 function readVol(): number {
   if (typeof window === "undefined") return 0.9;
@@ -18,7 +21,6 @@ function readMute(): boolean {
   return window.localStorage.getItem(LS_MUTE) === "1";
 }
 
-/** Volume slider value 0–1 (ignored while muted). */
 export function getSoundVolume(): number {
   return readVol();
 }
@@ -27,7 +29,6 @@ export function getSoundMuted(): boolean {
   return readMute();
 }
 
-/** Effective output 0–1 applied to HTMLAudioElement. */
 export function getEffectiveSoundLevel(): number {
   if (readMute()) return 0;
   return readVol();
@@ -57,16 +58,49 @@ function publicUrl(filename: string): string {
   return path;
 }
 
-/** Minimal silent WAV (Chrome/Safari decode reliably). */
 const SILENT_WAV =
   "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
 
 let primed = false;
 let priming = false;
 
-/**
- * Must run during a user gesture (tap/click). Socket-driven playback is blocked otherwise.
- */
+/** Looping background music element */
+let bgmEl: HTMLAudioElement | null = null;
+
+export function syncBackgroundMusic(): void {
+  if (!bgmEl) return;
+  bgmEl.volume = getEffectiveSoundLevel() * BGM_LEVEL;
+}
+
+export function startBackgroundMusic(): void {
+  if (typeof window === "undefined") return;
+  const eff = getEffectiveSoundLevel();
+  if (!bgmEl) {
+    bgmEl = new Audio(publicUrl("showgamebgmusic.mp3"));
+    bgmEl.loop = true;
+    bgmEl.playsInline = true;
+    bgmEl.preload = "auto";
+  }
+  syncBackgroundMusic();
+  if (eff <= 0) {
+    bgmEl.pause();
+    return;
+  }
+  void bgmEl.play().catch((err) => {
+    if (import.meta.env.DEV) console.warn("[audio] bgm", err);
+  });
+}
+
+export function stopBackgroundMusic(): void {
+  if (!bgmEl) return;
+  bgmEl.pause();
+  bgmEl.currentTime = 0;
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener(SOUND_SETTINGS_EVENT, () => syncBackgroundMusic());
+}
+
 export function primeAudioPlayback(): void {
   if (typeof window === "undefined" || primed || priming) return;
   priming = true;
@@ -99,7 +133,15 @@ export function primeAudioPlayback(): void {
       silent.src = "";
       silent.load();
 
-      for (const file of ["CARDSHOW.mp3", "SHOW.mp3", "WINNER.mp3"]) {
+      const warmFiles = [
+        "CARDSHOW.mp3",
+        "SHOW.mp3",
+        "WINNER.mp3",
+        "CARDPASSSOUND.mp3",
+        "COUNTDOWN.mp3",
+        "showgamebgmusic.mp3",
+      ];
+      for (const file of warmFiles) {
         const w = new Audio(publicUrl(file));
         w.playsInline = true;
         const eff = getEffectiveSoundLevel();
@@ -116,6 +158,7 @@ export function primeAudioPlayback(): void {
 
       primed = true;
       priming = false;
+      startBackgroundMusic();
     })
     .catch(() => {
       priming = false;
@@ -134,6 +177,42 @@ function playMp3(filename: string): void {
   void a.play().catch((err) => {
     if (import.meta.env.DEV) console.warn("[audio]", filename, err);
   });
+}
+
+/** Short tick when a countdown second rolls (pass timer / lobby). Uses COUNTDOWN.mp3 or a beep fallback. */
+export function playCountdownTick(): void {
+  const eff = getEffectiveSoundLevel();
+  if (eff <= 0) return;
+  const a = new Audio(publicUrl("COUNTDOWN.mp3"));
+  a.playsInline = true;
+  a.volume = eff;
+  void a.play().catch(() => playCountdownBeep(eff));
+}
+
+function playCountdownBeep(level: number): void {
+  try {
+    const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AC) return;
+    const ctx = new AC();
+    void ctx.resume();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = "sine";
+    o.frequency.value = 880;
+    g.gain.value = level * 0.08;
+    o.connect(g);
+    g.connect(ctx.destination);
+    const t0 = ctx.currentTime;
+    o.start(t0);
+    o.stop(t0 + 0.06);
+    window.setTimeout(() => void ctx.close(), 120);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function playCardPassSound(): void {
+  playMp3("CARDPASSSOUND.mp3");
 }
 
 export function announceCardShow(_threeOfAKindName?: string): void {

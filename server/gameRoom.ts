@@ -37,6 +37,8 @@ export interface RoomSnapshot {
   playAgainIds: string[];
   /** Players needed to tap Play Again to start the next deal (at least 4, or half the table rounded up for larger games). */
   playAgainQuorum: number;
+  /** Increments on each card pass (for client pass sound). */
+  passSinceDeal: number;
 }
 
 const LOBBY_MS = 2 * 60 * 1000;
@@ -512,6 +514,7 @@ export class GameRoom {
       winnerId: this.winnerId,
       playAgainIds: [...this.playAgainIds],
       playAgainQuorum: this.playAgainQuorum(),
+      passSinceDeal: this.passSinceDeal,
     };
   }
 }
