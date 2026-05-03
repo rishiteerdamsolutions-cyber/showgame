@@ -369,8 +369,66 @@ button.card5:disabled {
   to   { opacity: 1; transform: scale(1); }
 }
 
-/* ── fixed bottom: SHOW + Invite ─────────────────────── */
-.show-strip {
+/* ── sound bar (after join) ──────────────────────────── */
+.sound-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(0,0,0,0.28);
+  font-size: 0.85rem;
+}
+.sound-status {
+  font-weight: 700;
+  min-width: 5.5rem;
+}
+.sound-status.on { color: var(--accent2); }
+.sound-status.off { color: var(--muted); }
+.sound-mute {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  color: var(--muted);
+}
+.sound-mute input { accent-color: var(--accent2); cursor: pointer; }
+.sound-slider-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  flex: 1;
+  min-width: 140px;
+}
+.sound-slider-wrap input[type="range"] {
+  flex: 1;
+  max-width: 160px;
+  accent-color: var(--accent);
+}
+.sound-prime {
+  padding: 8px 14px !important;
+  font-size: 0.82rem !important;
+  border-radius: 10px !important;
+}
+
+.ghost-btn {
+  margin-top: 8px;
+  background: transparent !important;
+  border: 1px dashed rgba(255,255,255,0.35) !important;
+  color: var(--muted) !important;
+  font-weight: 500 !important;
+}
+.ghost-btn:hover:not(:disabled) {
+  border-color: var(--accent2) !important;
+  color: var(--text) !important;
+}
+
+/* ── fixed bottom: invite ────────────────────────────── */
+.bottom-strip {
   position: fixed;
   left: 0;
   right: 0;
@@ -383,7 +441,7 @@ button.card5:disabled {
   background: linear-gradient(180deg, transparent, rgba(8,9,12,0.95) 40%);
   pointer-events: auto;
 }
-.show-strip button {
+.bottom-strip button {
   min-height: 52px;
   font-size: 1rem;
   padding-inline: 28px;

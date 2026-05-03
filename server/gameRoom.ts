@@ -35,6 +35,8 @@ export interface RoomSnapshot {
   };
   winnerId?: string;
   playAgainIds: string[];
+  /** Players needed to tap Play Again to start the next deal (at least 4, or half the table rounded up for larger games). */
+  playAgainQuorum: number;
 }
 
 const LOBBY_MS = 2 * 60 * 1000;
@@ -240,10 +242,16 @@ export class GameRoom {
     return this.reconnectSeat(playerId, socketId);
   }
 
+  /** Enough \"Play again\" taps to start the next lobby (not everyone must tap on large tables). */
+  private playAgainQuorum(): number {
+    const n = this.seats.length;
+    return Math.max(MIN_PLAYERS, Math.ceil(n / 2));
+  }
+
   requestPlayAgain(playerId: string): boolean {
     if (this.phase !== "game_over") return false;
     this.playAgainIds.add(playerId);
-    if (this.playAgainIds.size >= MIN_PLAYERS) {
+    if (this.playAgainIds.size >= this.playAgainQuorum()) {
       return this.startNextMatchIfReady();
     }
     return false;
@@ -251,6 +259,7 @@ export class GameRoom {
 
   startNextMatchIfReady(): boolean {
     if (this.phase !== "game_over") return false;
+    if (this.playAgainIds.size < this.playAgainQuorum()) return false;
     const active = this.seats.filter((s) => this.playAgainIds.has(s.id));
     if (active.length < MIN_PLAYERS) return false;
 
@@ -502,6 +511,7 @@ export class GameRoom {
       lastEvent: this.lastBroadcast,
       winnerId: this.winnerId,
       playAgainIds: [...this.playAgainIds],
+      playAgainQuorum: this.playAgainQuorum(),
     };
   }
 }

@@ -1,6 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
-import { announceCardShow, announceShow, resumeAudio } from "./audio";
+import {
+  announceCardShow,
+  announceShow,
+  getEffectiveSoundLevel,
+  getSoundMuted,
+  getSoundVolume,
+  primeAudioPlayback,
+  SOUND_SETTINGS_EVENT,
+  setSoundMuted,
+  setSoundVolume,
+} from "./audio";
 
 type CardModel = { id: string; name: string };
 
@@ -18,6 +28,7 @@ type RoomPayload = {
     | undefined;
   winnerId?: string;
   playAgainIds: string[];
+  playAgainQuorum: number;
 };
 
 type ServerState = {
@@ -67,6 +78,7 @@ export default function App(): JSX.Element {
     body: string;
   } | null>(null);
   const flashKeyRef = useRef<string | null>(null);
+  const [, setSoundUi] = useState(0);
 
   useEffect(() => { window.localStorage.setItem(LS_NAME, name); }, [name]);
   useEffect(() => { window.localStorage.setItem(LS_ROOM, roomName); }, [roomName]);
@@ -105,7 +117,6 @@ export default function App(): JSX.Element {
       ev.playerId != null
         ? snapshot.room.players.find((p) => p.id === ev.playerId)?.name ?? "Player"
         : "Player";
-    void resumeAudio();
     if (ev.type === "card_show") {
       const cardName = ev.name ?? "";
       setFlashOverlay({ kind: "card_show", title: "CARD SHOW", body: `${playerName} · ${cardName}` });
@@ -140,12 +151,29 @@ export default function App(): JSX.Element {
       setError("Deploy error: set VITE_SOCKET_URL in Vercel to your Game API URL.");
       return;
     }
+    primeAudioPlayback();
     setError(null);
     const pid = window.localStorage.getItem(LS_PID);
     socketRef.current.emit("join", { roomName, playerName: name, ...(pid ? { playerId: pid } : {}) });
     setJoined(true);
-    void resumeAudio();
   }, [name, roomName]);
+
+  /** First tap anywhere after joining unlocks audio on strict browsers (iOS Safari). */
+  useEffect(() => {
+    if (!joined) return;
+    const onFirstTap = () => {
+      primeAudioPlayback();
+      window.removeEventListener("pointerdown", onFirstTap, true);
+    };
+    window.addEventListener("pointerdown", onFirstTap, { capture: true });
+    return () => window.removeEventListener("pointerdown", onFirstTap, true);
+  }, [joined]);
+
+  useEffect(() => {
+    const sync = () => setSoundUi((n) => n + 1);
+    window.addEventListener(SOUND_SETTINGS_EVENT, sync);
+    return () => window.removeEventListener(SOUND_SETTINGS_EVENT, sync);
+  }, []);
 
   useEffect(() => {
     const selfId = snapshot?.room.selfId;
@@ -153,19 +181,29 @@ export default function App(): JSX.Element {
   }, [snapshot]);
 
   const onPickCard = (index: number) => {
+    primeAudioPlayback();
     if (!snapshot || snapshot.room.phase !== "passing") return;
     if (snapshot.room.selfId !== snapshot.room.currentTurnPlayerId) return;
     socketRef.current?.emit("pass_card", { cardIndex: index });
   };
 
-  const onShowTap = async () => {
-    await resumeAudio();
+  const onClaimRank = () => {
+    primeAudioPlayback();
     socketRef.current?.emit("show_claim");
   };
 
-  const onPlayAgain = () => socketRef.current?.emit("play_again");
-  const onStartGameNow = () => socketRef.current?.emit("start_game");
-  const copyInviteLink = useCallback(() => { void navigator.clipboard?.writeText(window.location.href); }, []);
+  const onPlayAgain = () => {
+    primeAudioPlayback();
+    socketRef.current?.emit("play_again");
+  };
+  const onStartGameNow = () => {
+    primeAudioPlayback();
+    socketRef.current?.emit("start_game");
+  };
+  const copyInviteLink = useCallback(() => {
+    primeAudioPlayback();
+    void navigator.clipboard?.writeText(window.location.href);
+  }, []);
 
   const playerCount = snapshot?.room.players.length ?? 0;
   const leaderboard = snapshot?.leaderboard ?? [];
@@ -196,6 +234,10 @@ export default function App(): JSX.Element {
 
   const isPlaying = snapshot?.room.phase === "passing";
 
+  const playAgainQuorum = snapshot?.room.playAgainQuorum ?? 4;
+  const playAgainCount = snapshot?.room.playAgainIds?.length ?? 0;
+  const soundOn = getEffectiveSoundLevel() > 0;
+
   return (
     <div className={`app ${isPlaying ? "app--playing" : ""}`}>
       {/* ── full-screen flash: CARD SHOW / SHOW ── */}
@@ -209,6 +251,35 @@ export default function App(): JSX.Element {
       )}
 
       {/* ── deploy error banner ── */}
+      {/* Sound — visible after entering arena; unlocking happens on that tap */}
+      {joined && (
+        <div className="sound-bar" aria-label="Sound controls">
+          <span className={`sound-status ${soundOn ? "on" : "off"}`}>{soundOn ? "Sound on" : "Muted"}</span>
+          <label className="sound-mute">
+            <input
+              type="checkbox"
+              checked={getSoundMuted()}
+              onChange={(e) => setSoundMuted(e.target.checked)}
+            />
+            Mute
+          </label>
+          <label className="sound-slider-wrap">
+            Vol
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={Math.round(getSoundVolume() * 100)}
+              onChange={(e) => setSoundVolume(Number(e.target.value) / 100)}
+              aria-valuetext={`${Math.round(getSoundVolume() * 100)} percent`}
+            />
+          </label>
+          <button type="button" className="sound-prime" onClick={() => primeAudioPlayback()}>
+            Enable audio
+          </button>
+        </div>
+      )}
+
       {MISSING_REALTIME && (
         <div role="alert" className="panel deploy-error">
           <strong>Realtime server not configured.</strong>
@@ -382,22 +453,21 @@ export default function App(): JSX.Element {
             Play again
           </button>
           <p className="meta" style={{ marginTop: 10 }}>
-            When at least four players tap Play Again, a fresh round starts.
+            Ready: <strong>{playAgainCount}</strong> / <strong>{playAgainQuorum}</strong> players — next round starts when enough people tap (large tables don&apos;t need everyone).
           </p>
+
+          <p className="meta" style={{ marginTop: 14 }}>
+            Winner was announced automatically. Tap below only to record your place in the prize order:
+          </p>
+          <button type="button" className="ghost-btn" onClick={onClaimRank}>
+            Claim my prize place
+          </button>
         </div>
       )}
 
-      {/* ── fixed bottom bar: SHOW button + invite ── */}
+      {/* Fixed bottom: invite only (SHOW is automatic + flash + sounds) */}
       {joined && snapshot && (
-        <div className="show-strip">
-          <button
-            type="button"
-            className="primary"
-            disabled={snapshot.room.phase !== "game_over"}
-            onClick={onShowTap}
-          >
-            SHOW
-          </button>
+        <div className="bottom-strip">
           <button type="button" onClick={copyInviteLink}>
             Invite
           </button>
