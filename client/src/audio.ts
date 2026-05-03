@@ -1,44 +1,32 @@
-/** Tiny WebAudio cues — zero external mp3 downloads. */
+/** MP3 cues from `client/public`: CARDSHOW.mp3, SHOW.mp3, WINNER.mp3 */
 
-let ctxRef: AudioContext | null = null;
-
-function ctx(): AudioContext | null {
-  if (typeof AudioContext === "undefined") return null;
-  if (!ctxRef) ctxRef = new AudioContext();
-  return ctxRef;
+function publicUrl(filename: string): string {
+  const base = import.meta.env.BASE;
+  return `${base}${filename}`.replace(/\/{2,}/g, "/");
 }
 
-function beep(freq: number, dur: number, type: OscillatorType = "sine", gain = 0.06): void {
-  const ac = ctx();
-  if (!ac) return;
-  const o = ac.createOscillator();
-  const g = ac.createGain();
-  o.type = type;
-  o.frequency.value = freq;
-  g.gain.value = gain;
-  o.connect(g);
-  g.connect(ac.destination);
-  const t0 = ac.currentTime;
-  g.gain.setValueAtTime(0.0001, t0);
-  g.gain.exponentialRampToValueAtTime(gain, t0 + 0.01);
-  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
-  o.start(t0);
-  o.stop(t0 + dur + 0.03);
-}
+let unlockCtx: AudioContext | null = null;
 
-export function playCardShow(): void {
-  beep(880, 0.08);
-  window.setTimeout(() => beep(1320, 0.075, "triangle"), 70);
-}
-
-export function playShow(): void {
-  const ac = ctx();
-  if (!ac) return;
-  [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => window.setTimeout(() => beep(f, 0.15, "triangle", 0.09), i * 115));
-}
-
+/** Call after a user gesture (join tap, etc.) so MP3 playback is allowed when events arrive over the socket. */
 export async function resumeAudio(): Promise<void> {
-  const c = ctx();
-  if (!c || c.state === "running") return;
-  await c.resume();
+  if (typeof AudioContext === "undefined") return;
+  if (!unlockCtx) unlockCtx = new AudioContext();
+  if (unlockCtx.state !== "running") await unlockCtx.resume();
+}
+
+export function announceCardShow(_threeOfAKindName?: string): void {
+  const a = new Audio(publicUrl("CARDSHOW.mp3"));
+  void a.play().catch(() => {});
+}
+
+/** Plays SHOW.mp3, then WINNER.mp3 */
+export function announceShow(_winningCardName?: string, _winnerName?: string): void {
+  const show = new Audio(publicUrl("SHOW.mp3"));
+  show.addEventListener("ended", () => {
+    const winner = new Audio(publicUrl("WINNER.mp3"));
+    void winner.play().catch(() => {});
+  });
+  void show.play().catch(() => {
+    void new Audio(publicUrl("WINNER.mp3")).play().catch(() => {});
+  });
 }

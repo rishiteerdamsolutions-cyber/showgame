@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
-import { playCardShow, playShow, resumeAudio } from "./audio.ts";
+import { announceCardShow, announceShow, resumeAudio } from "./audio";
 
 type CardModel = { id: string; name: string };
 
@@ -8,10 +8,12 @@ type RoomPayload = {
   phase: string;
   countdownEndsAt: number | null;
   passDeadlineAt: number | null;
-  players: { id: string; name: string }[];
+  players: { id: string; name: string; seat?: number }[];
   selfId?: string;
   round: number;
   starterIndex: number;
+  /** Who must tap a card now (one turn at a time). */
+  currentTurnPlayerId?: string | null;
   lastEvent?:
     | { type: "card_show" | "show"; playerId?: string; name?: string; at: number }
     | undefined;
@@ -64,12 +66,12 @@ export default function App(): JSX.Element {
 
   const [snapshot, setSnapshot] = useState<ServerState | null>(null);
 
-  const [flashCardShow, setFlashCardShow] = useState(false);
-  const [flashShow, setFlashShow] = useState(false);
+  const [flashOverlay, setFlashOverlay] = useState<{
+    kind: "card_show" | "show";
+    title: string;
+    body: string;
+  } | null>(null);
   const flashKeyRef = useRef<string | null>(null);
-
-  const [waitingPass, setWaitingPass] = useState(false);
-  const lastRoundRef = useRef<number>(0);
 
   useEffect(() => {
     window.localStorage.setItem(LS_NAME, name);
@@ -91,10 +93,6 @@ export default function App(): JSX.Element {
 
     const onState = (p: ServerState) => {
       setSnapshot(p);
-      if (lastRoundRef.current !== p.room.round) {
-        setWaitingPass(false);
-        lastRoundRef.current = p.room.round;
-      }
     };
 
     const onErr = (msg: string) => setError(msg);
@@ -116,23 +114,39 @@ export default function App(): JSX.Element {
     };
   }, []);
 
-  /** Drive full-screen CARD SHOW / SHOW announcements + audio precisely once each time the server notifies. */
+  /** Full-screen + spoken announcements once per server event (CARD SHOW does not remove cards). */
   useEffect(() => {
     const ev = snapshot?.room.lastEvent;
-    if (!ev) return;
+    if (!ev || !snapshot) return;
     const k = `${ev.type}-${ev.at}-${ev.playerId ?? ""}-${ev.name ?? ""}`;
     if (flashKeyRef.current === k) return;
     flashKeyRef.current = k;
 
+    const playerName =
+      ev.playerId != null
+        ? snapshot.room.players.find((p) => p.id === ev.playerId)?.name ?? "Player"
+        : "Player";
+
     void resumeAudio();
+
     if (ev.type === "card_show") {
-      setFlashCardShow(true);
-      playCardShow();
-      window.setTimeout(() => setFlashCardShow(false), 1000);
-    } else if (ev.type === "show") {
-      setFlashShow(true);
-      playShow();
-      window.setTimeout(() => setFlashShow(false), 2600);
+      const cardName = ev.name ?? "";
+      setFlashOverlay({
+        kind: "card_show",
+        title: "CARD SHOW",
+        body: `${playerName} calls card show on ${cardName}. All four cards stay in your hand.`,
+      });
+      announceCardShow(cardName);
+      window.setTimeout(() => setFlashOverlay(null), 2800);
+    } else {
+      const cardName = ev.name ?? "";
+      setFlashOverlay({
+        kind: "show",
+        title: "SHOW",
+        body: `${playerName} wins with four ${cardName}.`,
+      });
+      announceShow(cardName, playerName);
+      window.setTimeout(() => setFlashOverlay(null), 3800);
     }
   }, [snapshot]);
 
@@ -182,14 +196,10 @@ export default function App(): JSX.Element {
   }, [snapshot]);
 
   const onPickCard = (index: number) => {
-    if (!snapshot || snapshot.room.phase !== "passing" || waitingPass) return;
+    if (!snapshot || snapshot.room.phase !== "passing") return;
+    if (snapshot.room.selfId !== snapshot.room.currentTurnPlayerId) return;
     socketRef.current?.emit("pass_card", { cardIndex: index });
-    setWaitingPass(true);
   };
-
-  useEffect(() => {
-    if (snapshot?.room.phase !== "passing") setWaitingPass(false);
-  }, [snapshot?.room.phase]);
 
   const onShowTap = async () => {
     await resumeAudio();
@@ -213,30 +223,41 @@ export default function App(): JSX.Element {
   const playerCount = snapshot?.room.players.length ?? 0;
 
   const needsMorePlayers =
-    playerCount < 2 &&
+    playerCount < 4 &&
     snapshot &&
     (snapshot.room.phase === "countdown" || snapshot.room.phase === "waiting");
 
-  /** Seat order matches the “Table” list: pass goes to the player listed next after you (wraps last → first). */
+  const isMyTurn =
+    !!snapshot &&
+    snapshot.room.phase === "passing" &&
+    !!snapshot.room.selfId &&
+    snapshot.room.selfId === snapshot.room.currentTurnPlayerId;
+
+  const activeTurnPlayer = useMemo(() => {
+    if (!snapshot?.room.currentTurnPlayerId) return null;
+    return snapshot.room.players.find((p) => p.id === snapshot.room.currentTurnPlayerId) ?? null;
+  }, [snapshot]);
+
+  /** Seat order 1→2→…→n→1: pass always goes to the next seat in the table list. */
   const passTargetName = useMemo(() => {
-    if (!snapshot?.room.selfId || snapshot.room.players.length < 2) return null;
+    if (!snapshot?.room.selfId || snapshot.room.players.length < 2 || !isMyTurn) return null;
     const seats = snapshot.room.players;
     const i = seats.findIndex((p) => p.id === snapshot.room.selfId);
     if (i < 0) return null;
     return seats[(i + 1) % seats.length]?.name ?? null;
-  }, [snapshot]);
+  }, [snapshot, isMyTurn]);
 
   return (
     <div className="app">
-      {(flashCardShow || flashShow) && (
-        <div className={`flash ${flashCardShow ? "card-show" : ""}`}>
+      {flashOverlay && (
+        <div
+          className={`flash ${flashOverlay.kind === "card_show" ? "card-show" : ""}`}
+          role="alert"
+          aria-live="assertive"
+        >
           <div className="flash-inner">
-            <h2>{flashCardShow ? "CARD SHOW" : "SHOW"}</h2>
-            <p style={{ opacity: 0.8, marginTop: 12 }}>
-              {flashCardShow
-                ? "Someone is one card away from four of a kind — stay sharp."
-                : "We have a full family SHOW — congratulations to the caller."}
-            </p>
+            <h2>{flashOverlay.title}</h2>
+            <p style={{ opacity: 0.9, marginTop: 12, fontSize: "1.05rem" }}>{flashOverlay.body}</p>
           </div>
         </div>
       )}
@@ -300,10 +321,9 @@ export default function App(): JSX.Element {
           </div>
           {error && <p className="error">{error}</p>}
           <p className="meta" style={{ marginTop: 16 }}>
-            Card faces use only RAMA, SITA, LAKSHMAN, HANUMAN, HE-MAN, SUPERMAN, JAMBA, VAALI, RAVAN, and JETAYU
-            · each seated player gets four copies of one of those · your table name above is only for scoring and
-            the lobby · max ten players · two minutes lobby after the first person arrives · same room phrase reunites
-            tables.
+            Card faces: RAMA, SITA, LAKSHMAN, HANUMAN, HE-MAN, SUPERMAN, JAMBA, VAALI, RAVAN, JETAYU · minimum{" "}
+            <strong>four players</strong> to deal · max ten · seats are numbered by join order · two-minute lobby after
+            the first arrival · same room phrase reunites the table.
           </p>
         </section>
       )}
@@ -317,10 +337,11 @@ export default function App(): JSX.Element {
             </div>
             {snapshot.room.phase === "countdown" && lobbyMs !== null && (
               <div className="countdown-banner">
-                {playerCount < 2 ? (
+                {playerCount < 4 ? (
                   <>
                     Lobby timer: <span>{formatRemaining(lobbyMs)}</span>
-                    &nbsp;— cards cannot deal until <strong>at least two people</strong> join this room.
+                    &nbsp;— cards cannot deal until <strong>four players</strong> join this room ({playerCount}/4
+                    here).
                   </>
                 ) : (
                   <>
@@ -333,27 +354,26 @@ export default function App(): JSX.Element {
             )}
             {needsMorePlayers && (
               <div className="solo-callout" role="region" aria-label="What to do while waiting">
-                <div className="solo-callout-title">What you should do right now</div>
+                <div className="solo-callout-title">Need four players</div>
                 <p className="solo-callout-lead">
-                  You are <strong>alone</strong> at this table. Family SHOW needs <strong>two or more players</strong>{" "}
-                  before anyone gets cards.
+                  You have <strong>{playerCount} of 4</strong> players at this table. Every seat counts — passes move{" "}
+                  <strong>Seat 1 → Seat 2 → … → back to Seat 1</strong>.
                 </p>
                 <ol className="solo-steps">
                   <li>
                     Tap <strong>Copy invite link</strong> (below or here) and send it on WhatsApp, SMS, or email.
                   </li>
                   <li>
-                    Others open the link, type the <strong>same room phrase</strong> as you (<strong>{roomName}</strong>
-                    ), enter their name, and tap <strong>Enter arena</strong>.
+                    Others open the link, use the <strong>same room phrase</strong> (<strong>{roomName}</strong>), enter
+                    their name, tap <strong>Enter arena</strong>.
                   </li>
                   <li>
-                    When a second person arrives, the <strong>Start game now</strong> button appears — use it to begin
-                    early, or wait for this timer to finish.
+                    When <strong>four people</strong> are seated, <strong>Start game now</strong> appears — use it to
+                    begin early, or wait for this timer.
                   </li>
                 </ol>
                 <p className="solo-callout-note">
-                  If the timer reaches zero while you are still alone, nothing deals yet — keep sharing the link until
-                  someone joins.
+                  If the timer hits zero before four players arrive, no cards deal yet — keep inviting until four join.
                 </p>
                 <button type="button" className="primary solo-copy-btn" onClick={copyInviteLink}>
                   Copy invite link
@@ -361,7 +381,7 @@ export default function App(): JSX.Element {
               </div>
             )}
             {(snapshot.room.phase === "countdown" || snapshot.room.phase === "waiting") &&
-              playerCount >= 2 && (
+              playerCount >= 4 && (
                 <div style={{ marginTop: 14 }}>
                   <button type="button" className="primary" onClick={onStartGameNow}>
                     Start game now
@@ -379,50 +399,70 @@ export default function App(): JSX.Element {
                   : "Hands are closed — leaderboard is final for this SHOW."}
               </p>
             )}
-            {snapshot.room.phase === "countdown" && playerCount >= 2 && (
+            {snapshot.room.phase === "countdown" && playerCount >= 4 && (
               <p className="meta">
-                Everyone is in — use <strong>Start game now</strong> when you are ready, or wait for the timer.
+                Four players in — use <strong>Start game now</strong> when you are ready, or wait for the timer.
               </p>
+            )}
+            {snapshot.room.phase === "passing" && activeTurnPlayer && (
+              <div
+                className={`turn-banner ${isMyTurn ? "turn-banner--yours" : ""}`}
+                role="status"
+                aria-live="polite"
+              >
+                {isMyTurn ? (
+                  <>
+                    <strong>Your turn</strong> — tap one card below to pass it to <strong>{passTargetName ?? "next"}</strong>{" "}
+                    (next seat in the table).
+                  </>
+                ) : (
+                  <>
+                    Waiting for <strong>{activeTurnPlayer.name}</strong>
+                    {activeTurnPlayer.seat ? <> · Seat {activeTurnPlayer.seat}</> : ""} to pass a card…
+                  </>
+                )}
+              </div>
             )}
             {snapshot.room.phase === "passing" && (
               <div className="pass-callout" role="region" aria-label="Pass instructions">
                 <div className="pass-callout-title">
-                  Round {snapshot.room.round} · Pass one card
+                  Round {snapshot.room.round} · One turn at a time
                 </div>
                 <ol className="pass-steps">
                   <li>
-                    <strong>Tap exactly one card</strong> below (only one tap counts). That card is{" "}
-                    <strong>given to the next player</strong> — it is <em>not</em> thrown away or removed from play.
+                    Only the highlighted player taps <strong>one card</strong>. That card moves to the{" "}
+                    <strong>next seat</strong> (Seat 1→2→…→n→1).
                   </li>
                   <li>
-                    It goes to <strong>{passTargetName ?? "the next player"}</strong> — whoever appears{" "}
-                    <em>right after your name</em> in the table list (the last player passes to the first).
+                    The player who receives may briefly hold <strong>five cards</strong>. They must tap one to pass on
+                    within <strong>10 seconds</strong>. If time runs out, the <strong>right-hand card</strong> in their row
+                    passes automatically.
                   </li>
                   <li>
-                    This table picks passes <strong>all at once</strong>: when the round closes, each player sends one
-                    card forward and receives one from behind. So if everyone held four cards,{" "}
-                    <strong>everyone still has four</strong> after the swap (same with 2 people or 10).
-                  </li>
-                  <li>
-                    Only <em>after</em> that swap does the game apply matching rules (pairs, four-of-a-kind, etc.). You
-                    never “discard into the bin” by tapping — you only choose what to pass along.
+                    After each pass, <strong>that receiver goes next</strong>, until someone collects four of the same
+                    name and SHOW wins.
                   </li>
                 </ol>
                 <p className="pass-goal">
-                  Goal: end up with <strong>four cards with the same name</strong> to win the hand.
+                  Seats follow join order: first person is Seat 1, second Seat 2, and passes always flow to the next
+                  higher seat (wraps back to Seat 1).
                 </p>
               </div>
             )}
             {snapshot.room.phase === "passing" && passMs !== null && (
               <div className="meta pass-timer-line">
-                Time left to choose:&nbsp;
-                <strong>{formatRemaining(passMs)}</strong>
-                {waitingPass ? (
-                  <span className="pass-status waiting">
-                    · You locked in your card — waiting for everyone else…
-                  </span>
+                {isMyTurn ? (
+                  <>
+                    Your clock:&nbsp;
+                    <strong>{formatRemaining(passMs)}</strong>
+                    <span className="pass-status pick"> · Tap one card below.</span>
+                  </>
                 ) : (
-                  <span className="pass-status pick"> · Tap a card below when you are ready.</span>
+                  <>
+                    {activeTurnPlayer?.name ?? "Active"}&apos;s timer:&nbsp;
+                    <strong>{formatRemaining(passMs)}</strong>
+                    <span className="pass-status waiting"> · Sit tight.</span>
+                  </>
                 )}
               </div>
             )}
@@ -431,15 +471,15 @@ export default function App(): JSX.Element {
           <section className="panel">
             <h2 style={{ marginTop: 0, fontSize: "1.2rem" }}>Table order (pass goes → next)</h2>
             <div className="players">
-              {snapshot.room.players.map((p) => (
+              {snapshot.room.players.map((p, idx) => (
                 <div
                   key={p.id}
-                  className={`pill ${p.id === snapshot.room.selfId ? "you" : ""}`}
+                  className={`pill ${p.id === snapshot.room.selfId ? "you" : ""} ${
+                    snapshot.room.phase === "passing" && p.id === snapshot.room.currentTurnPlayerId ? "pill-active" : ""
+                  }`}
                 >
-                  {p.name}
-                  {p.id === snapshot.room.players[snapshot.room.starterIndex]?.id
-                    ? " · deals first card"
-                    : ""}
+                  Seat {p.seat ?? idx + 1} · {p.name}
+                  {p.id === snapshot.room.players[snapshot.room.starterIndex]?.id ? " · opens table" : ""}
                 </div>
               ))}
             </div>
@@ -456,34 +496,39 @@ export default function App(): JSX.Element {
                 Nothing here until the hand starts — invite players above, then cards appear for everyone at once.
               </p>
             )}
-            {snapshot.room.phase === "passing" && passTargetName && (
+            {snapshot.room.phase === "passing" && isMyTurn && passTargetName && (
               <p className="meta hand-hint">
-                Pass destination this round: <strong>{passTargetName}</strong>
+                Your pass goes to Seat&nbsp;
+                {snapshot.room.players[
+                  (snapshot.room.players.findIndex((x) => x.id === snapshot.room.selfId) + 1) %
+                    snapshot.room.players.length
+                ]?.seat ?? "?"}{" "}
+                · <strong>{passTargetName}</strong>
               </p>
             )}
 
             {(snapshot.room.phase === "passing" ||
               (snapshot.room.phase === "countdown" && snapshot.myHand.length > 0)) && (
-              <div
-                className={`hand ${snapshot.room.phase === "passing" && waitingPass ? "hand--locked" : ""}`}
-              >
+              <div className={`hand ${snapshot.room.phase === "passing" && !isMyTurn ? "hand--locked" : ""}`}>
                 {snapshot.myHand.map((c, idx) => (
                   <button
                     type="button"
                     key={c.id}
                     className="card"
-                    disabled={
-                      snapshot.room.phase !== "passing" || waitingPass
-                    }
+                    disabled={snapshot.room.phase !== "passing" || !isMyTurn}
                     onClick={() => onPickCard(idx)}
-                    aria-label={`Pass ${c.name} to ${passTargetName ?? "next player"}`}
+                    aria-label={
+                      isMyTurn
+                        ? `Pass ${c.name} to ${passTargetName ?? "next player"}`
+                        : `Not your turn — ${c.name}`
+                    }
                   >
                     <span className="card-name">{c.name}</span>
                     <span className="card-action">
                       {snapshot.room.phase === "passing"
-                        ? waitingPass
-                          ? "Locked in"
-                          : `Tap → ${passTargetName ?? "next"}`
+                        ? isMyTurn
+                          ? `Tap → ${passTargetName ?? "next"}`
+                          : "Wait — not your turn"
                         : "Deal opens soon"}
                     </span>
                   </button>
@@ -522,8 +567,8 @@ export default function App(): JSX.Element {
                 Play another SHOW in this room phrase
               </button>
               <p className="meta" style={{ marginTop: 10 }}>
-                Invite everyone who wants another scramble — as soon as at least two people tap Play Again we
-                start a fresh two-minute countdown with only brave returners seeded in.
+                Invite everyone who wants another scramble — when at least four people tap Play Again we start a fresh
+                two-minute countdown with only those returners.
               </p>
             </section>
           )}

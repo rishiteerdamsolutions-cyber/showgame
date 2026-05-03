@@ -244,6 +244,26 @@ button:disabled {
   line-height: 1.45;
 }
 
+.turn-banner {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.28);
+  font-size: 0.95rem;
+  line-height: 1.45;
+}
+
+.turn-banner--yours {
+  border-color: rgba(244, 185, 66, 0.55);
+  background: rgba(244, 185, 66, 0.1);
+}
+
+.pill-active {
+  outline: 2px solid var(--accent2);
+  box-shadow: 0 0 0 3px rgba(90, 212, 201, 0.18);
+}
+
 .card {
   width: 132px;
   min-height: 180px;

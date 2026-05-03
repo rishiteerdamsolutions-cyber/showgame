@@ -3,8 +3,8 @@ import path from "node:path";
 import express from "express";
 import cors from "cors";
 import { Server } from "socket.io";
-import { assertConfiguredNames } from "./names.ts";
-import { GameRoom, normalizeRoom } from "./gameRoom.ts";
+import { assertConfiguredNames } from "./names";
+import { GameRoom, normalizeRoom } from "./gameRoom";
 
 assertConfiguredNames();
 
@@ -156,7 +156,7 @@ async function bootstrap(): Promise<void> {
       if (!ok) {
         socket.emit(
           "error_msg",
-          "Cannot start yet — need at least two players seated (or the match already began).",
+          "Cannot start yet — need at least four players seated (or the match already began).",
         );
         return;
       }

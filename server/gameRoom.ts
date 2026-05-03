@@ -1,4 +1,4 @@
-import { FAMILY_CARD_NAMES } from "./names.ts";
+import { FAMILY_CARD_NAMES } from "./names";
 
 export type Card = { id: string; name: string };
 
@@ -20,10 +20,13 @@ export interface RoomSnapshot {
   phase: GamePhase;
   countdownEndsAt: number | null;
   passDeadlineAt: number | null;
-  players: { id: string; name: string }[];
+  /** Seats 1…n in join order; pass goes to the next seat (1→2→…→n→1). */
+  players: { id: string; name: string; seat: number }[];
   selfId?: string;
   round: number;
   starterIndex: number;
+  /** Who must tap a card this moment (sequential pass). */
+  currentTurnPlayerId: string | null;
   lastEvent?: {
     type: "card_show" | "show";
     playerId?: string;
@@ -35,7 +38,7 @@ export interface RoomSnapshot {
 }
 
 const LOBBY_MS = 2 * 60 * 1000;
-const MIN_PLAYERS = 2;
+const MIN_PLAYERS = 4;
 /** Time each player has to pick a card to pass each round. */
 const PASS_MS = 10 * 1000;
 
@@ -67,7 +70,8 @@ function countByName(cards: Card[]): Map<string, number> {
 }
 
 /**
- * From exactly 4 cards — win / CARD_SHOW potential / trim down to 3.
+ * From exactly 4 cards — classify win / CARD_SHOW (triple) / pair trim.
+ * When applied in play, CARD_SHOW only broadcasts; it does not remove cards from the hand.
  */
 export function resolveFourCardHand(cards: Card[]): {
   outcome: "win" | "card_show" | "trim";
@@ -171,7 +175,11 @@ export class GameRoom {
   starterIndex = 0;
   countdownEndsAt: number | null = null;
 
-  pendingPass = new Map<string, number>();
+  /** Whose turn it is to pass one card (receiver becomes active next). */
+  currentTurnPlayerId: string | null = null;
+
+  /** Counts each pass since deal (for full-table wave → bump round). */
+  passSinceDeal = 0;
 
   showClickOrder: string[] = [];
 
@@ -256,7 +264,8 @@ export class GameRoom {
     this.winnerName = undefined;
     this.showClickOrder = [];
     this.round = 0;
-    this.pendingPass.clear();
+    this.currentTurnPlayerId = null;
+    this.passSinceDeal = 0;
     this.lastBroadcast = undefined;
     this.generation += 1;
     this.rngSeed = (Math.random() * 0xffffffff) >>> 0;
@@ -272,7 +281,7 @@ export class GameRoom {
   }
 
   /**
-   * Any seated player may skip the lobby timer once at least two players are at the table.
+   * Any seated player may skip the lobby timer once at least four players are at the table.
    * If nobody taps start, `tick()` still auto-deals when the two-minute window ends.
    */
   requestStartGame(playerId: string): boolean {
@@ -301,9 +310,20 @@ export class GameRoom {
       return "none";
     }
 
-    if (this.phase === "passing" && this.passDeadlineAt && now >= this.passDeadlineAt) {
-      this.autofillMissingPasses();
-      this.applyPassRound();
+    if (
+      this.phase === "passing" &&
+      this.passDeadlineAt &&
+      now >= this.passDeadlineAt &&
+      this.currentTurnPlayerId
+    ) {
+      const seat = this.seats.find((s) => s.id === this.currentTurnPlayerId);
+      if (seat && seat.hand.length > 0) {
+        const rightMost = seat.hand.length - 1;
+        this.executePass(seat.id, rightMost);
+      } else {
+        // Avoid spinning every tick if turn state is inconsistent (should not happen in normal play).
+        this.passDeadlineAt = Date.now() + PASS_MS;
+      }
       return "pass_round";
     }
 
@@ -312,14 +332,11 @@ export class GameRoom {
 
   submitPass(playerId: string, cardIndex: number): boolean {
     if (this.phase !== "passing") return false;
+    if (playerId !== this.currentTurnPlayerId) return false;
     const seat = this.seats.find((s) => s.id === playerId);
     if (!seat) return false;
     if (cardIndex < 0 || cardIndex >= seat.hand.length) return false;
-    this.pendingPass.set(playerId, cardIndex);
-    if (this.pendingPass.size === this.seats.length) {
-      this.applyPassRound();
-      return true;
-    }
+    this.executePass(playerId, cardIndex);
     return true;
   }
 
@@ -342,91 +359,71 @@ export class GameRoom {
     this.starterIndex = Math.floor(rng() * n);
     this.round = 1;
     this.phase = "passing";
+    this.passSinceDeal = 0;
+    this.currentTurnPlayerId = this.seats[this.starterIndex]!.id;
     this.passDeadlineAt = Date.now() + PASS_MS;
-    this.pendingPass.clear();
   }
 
-  private autofillMissingPasses(): void {
-    const rng = makeRng((this.round + 31 + this.rngSeed) >>> 0);
-    for (const s of this.seats) {
-      if (!this.pendingPass.has(s.id) && s.hand.length > 0) {
-        const idx = Math.floor(rng() * s.hand.length);
-        this.pendingPass.set(s.id, idx);
-      }
-    }
-  }
+  /**
+   * Pass one card from sender to the next seat (seat 1→2→…→n→1). Receiver always acts next.
+   * Timeout uses rightmost card index (hand[length-1]).
+   */
+  private executePass(senderId: string, cardIndex: number): void {
+    if (this.phase !== "passing" || senderId !== this.currentTurnPlayerId) return;
 
-  private stabilizeSeat(player: PlayerSeat): boolean {
-    for (;;) {
-      if (player.hand.length > 5) {
-        player.hand.splice(5);
-        continue;
-      }
-      if (player.hand.length === 5) {
-        const five = resolveFiveCardHand(player.hand);
-        player.hand = five.hand;
-        if (five.outcome === "win") {
-          this.endGame(player.id, five.winningName ?? player.hand[0]?.name ?? "?");
-          return true;
-        }
-        // Now 4 cards — resolve again below.
-        continue;
-      }
-      if (player.hand.length === 4) {
-        const r = resolveFourCardHand(player.hand);
-        if (r.outcome === "win") {
-          this.endGame(player.id, r.winningName ?? player.hand[0]?.name ?? "?");
-          return true;
-        }
-        if (r.outcome === "card_show") {
-          this.lastBroadcast = {
-            type: "card_show",
-            playerId: player.id,
-            name: r.cardShowName,
-            at: Date.now(),
-          };
-          player.hand = r.hand;
-          break;
-        }
-        player.hand = r.hand;
-        break;
-      }
-      break;
-    }
-    return false;
-  }
-
-  private applyPassRound(): void {
+    const si = this.seats.findIndex((s) => s.id === senderId);
+    if (si < 0) return;
     const n = this.seats.length;
-    if (n === 0) return;
+    const sender = this.seats[si]!;
+    const ri = (si + 1) % n;
+    const receiver = this.seats[ri]!;
 
-    const outgoing: Card[] = [];
-    for (let i = 0; i < n; i++) {
-      const s = this.seats[i]!;
-      const idx = this.pendingPass.get(s.id);
-      const pick =
-        typeof idx === "number" && idx >= 0 && idx < s.hand.length ? idx : 0;
-      const card = s.hand.splice(pick, 1)[0];
-      outgoing.push(card!);
-    }
-    this.pendingPass.clear();
-    this.passDeadlineAt = null;
+    if (cardIndex < 0 || cardIndex >= sender.hand.length) return;
 
-    // Seat i receives what seat (i-1) sent (clockwise).
-    for (let i = 0; i < n; i++) {
-      const inc = outgoing[(i - 1 + n) % n]!;
-      this.seats[i]!.hand.push(inc);
-    }
+    const [card] = sender.hand.splice(cardIndex, 1);
+    receiver.hand.push(card);
+    this.passSinceDeal++;
 
-    for (const seat of this.seats) {
-      if (this.stabilizeSeat(seat)) {
+    // Five cards: only instant SHOW (four of a kind + stray). Other five-card shapes stay at 5 until that player passes.
+    if (receiver.hand.length === 5) {
+      const probe = resolveFiveCardHand([...receiver.hand]);
+      if (probe.outcome === "win" && probe.winningName) {
+        this.endGame(receiver.id, probe.winningName);
         return;
       }
     }
 
-    this.round += 1;
-    this.phase = "passing";
+    if (this.applyFourCardRules(sender)) return;
+    if (this.applyFourCardRules(receiver)) return;
+
+    this.currentTurnPlayerId = receiver.id;
     this.passDeadlineAt = Date.now() + PASS_MS;
+
+    if (this.passSinceDeal % n === 0 && this.passSinceDeal > 0) {
+      this.round++;
+    }
+  }
+
+  /** @returns true if the game ended (SHOW). */
+  private applyFourCardRules(seat: PlayerSeat): boolean {
+    if (seat.hand.length !== 4) return false;
+    const r = resolveFourCardHand(seat.hand);
+    if (r.outcome === "win" && r.winningName) {
+      this.endGame(seat.id, r.winningName);
+      return true;
+    }
+    if (r.outcome === "card_show") {
+      this.lastBroadcast = {
+        type: "card_show",
+        playerId: seat.id,
+        name: r.cardShowName,
+        at: Date.now(),
+      };
+      // Announce only — do not remove cards; the player still holds all four.
+      return false;
+    }
+    seat.hand = r.hand;
+    return false;
   }
 
   private endGame(winnerSeatId: string, winningCardName: string): void {
@@ -434,7 +431,7 @@ export class GameRoom {
     this.winnerName = winningCardName;
     for (const s of this.seats) s.hand = [];
     this.phase = "game_over";
-    this.pendingPass.clear();
+    this.currentTurnPlayerId = null;
     this.passDeadlineAt = null;
     this.lastBroadcast = {
       type: "show",
@@ -457,10 +454,15 @@ export class GameRoom {
       phase: this.phase,
       countdownEndsAt: this.countdownEndsAt,
       passDeadlineAt: this.passDeadlineAt,
-      players: this.seats.map((s) => ({ id: s.id, name: s.name })),
+      players: this.seats.map((s, i) => ({
+        id: s.id,
+        name: s.name,
+        seat: i + 1,
+      })),
       selfId: playerId,
       round: this.round,
       starterIndex: this.starterIndex,
+      currentTurnPlayerId: this.currentTurnPlayerId,
       lastEvent: this.lastBroadcast,
       winnerId: this.winnerId,
       playAgainIds: [...this.playAgainIds],
