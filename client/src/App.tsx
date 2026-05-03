@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import {
-  announceCardShow,
   announceShow,
   getEffectiveSoundLevel,
   getSoundMuted,
@@ -76,11 +75,7 @@ export default function App(): JSX.Element {
   const [error, setError] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<ServerState | null>(null);
 
-  const [flashOverlay, setFlashOverlay] = useState<{
-    kind: "card_show" | "show";
-    title: string;
-    body: string;
-  } | null>(null);
+  const [flashOverlay, setFlashOverlay] = useState<{ title: string; body: string } | null>(null);
   const flashKeyRef = useRef<string | null>(null);
   const [, setSoundUi] = useState(0);
   const prevPassSinceRef = useRef(0);
@@ -126,16 +121,16 @@ export default function App(): JSX.Element {
         ? snapshot.room.players.find((p) => p.id === ev.playerId)?.name ?? "Player"
         : "Player";
     if (ev.type === "card_show") {
-      const cardName = ev.name ?? "";
-      setFlashOverlay({ kind: "card_show", title: "CARD SHOW", body: `${playerName} · ${cardName}` });
-      announceCardShow(cardName);
-      window.setTimeout(() => setFlashOverlay(null), 2800);
-    } else {
-      const cardName = ev.name ?? "";
-      setFlashOverlay({ kind: "show", title: "SHOW!", body: `${playerName} wins with four ${cardName}` });
-      announceShow(cardName, playerName);
-      window.setTimeout(() => setFlashOverlay(null), 4000);
+      /* CARD SHOW UI disabled — only SHOW / WINNER celebration for a winning hand */
+      return;
     }
+    const cardName = ev.name ?? "";
+    setFlashOverlay({
+      title: "SHOW!",
+      body: `${playerName} wins — Winner`,
+    });
+    announceShow(cardName, playerName);
+    window.setTimeout(() => setFlashOverlay(null), 4000);
   }, [snapshot]);
 
   const [tick, setTick] = useState(0);
@@ -299,7 +294,7 @@ export default function App(): JSX.Element {
     <div className={`app ${isPlaying ? "app--playing" : ""}`}>
       {/* ── full-screen flash: CARD SHOW / SHOW ── */}
       {flashOverlay && (
-        <div className={`flash ${flashOverlay.kind === "card_show" ? "flash--cardshow" : "flash--show"}`} role="alert" aria-live="assertive">
+        <div className="flash flash--show" role="alert" aria-live="assertive">
           <div className="flash-inner">
             <h2 className="flash-title">{flashOverlay.title}</h2>
             <p className="flash-body">{flashOverlay.body}</p>

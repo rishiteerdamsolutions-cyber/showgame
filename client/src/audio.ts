@@ -134,7 +134,6 @@ export function primeAudioPlayback(): void {
       silent.load();
 
       const warmFiles = [
-        "CARDSHOW.mp3",
         "SHOW.mp3",
         "WINNER.mp3",
         "CARDPASSSOUND.mp3",
@@ -215,8 +214,9 @@ export function playCardPassSound(): void {
   playMp3("CARDPASSSOUND.mp3");
 }
 
+/** Disabled — re-enable when bringing CARD SHOW overlay + CARDSHOW.mp3 back. */
 export function announceCardShow(_threeOfAKindName?: string): void {
-  playMp3("CARDSHOW.mp3");
+  void _threeOfAKindName;
 }
 
 export function announceShow(_winningCardName?: string, _winnerName?: string): void {
