@@ -70,8 +70,8 @@ function countByName(cards: Card[]): Map<string, number> {
 }
 
 /**
- * From exactly 4 cards — classify win / CARD_SHOW (triple) / pair trim.
- * When applied in play, CARD_SHOW only broadcasts; it does not remove cards from the hand.
+ * From exactly 4 cards — classify win / CARD_SHOW (triple) / other layouts (“trim”).
+ * In play we only act on win + CARD_SHOW announcements; pair layouts do not auto-remove cards.
  */
 export function resolveFourCardHand(cards: Card[]): {
   outcome: "win" | "card_show" | "trim";
@@ -317,11 +317,24 @@ export class GameRoom {
       this.currentTurnPlayerId
     ) {
       const seat = this.seats.find((s) => s.id === this.currentTurnPlayerId);
-      if (seat && seat.hand.length > 0) {
+      if (!seat) {
+        this.passDeadlineAt = Date.now() + PASS_MS;
+        return "pass_round";
+      }
+      const si = this.seats.findIndex((s) => s.id === seat.id);
+      if (si < 0) {
+        this.passDeadlineAt = Date.now() + PASS_MS;
+        return "pass_round";
+      }
+      // Must hold 4+ cards to pass one and stay at 3+; otherwise skip turn without moving cards.
+      if (seat.hand.length < 4) {
+        this.advanceTurnWithoutPass(si);
+        return "pass_round";
+      }
+      if (seat.hand.length > 0) {
         const rightMost = seat.hand.length - 1;
         this.executePass(seat.id, rightMost);
       } else {
-        // Avoid spinning every tick if turn state is inconsistent (should not happen in normal play).
         this.passDeadlineAt = Date.now() + PASS_MS;
       }
       return "pass_round";
@@ -335,6 +348,12 @@ export class GameRoom {
     if (playerId !== this.currentTurnPlayerId) return false;
     const seat = this.seats.find((s) => s.id === playerId);
     if (!seat) return false;
+    const si = this.seats.findIndex((s) => s.id === playerId);
+    if (si < 0) return false;
+    if (seat.hand.length < 4) {
+      this.advanceTurnWithoutPass(si);
+      return true;
+    }
     if (cardIndex < 0 || cardIndex >= seat.hand.length) return false;
     this.executePass(playerId, cardIndex);
     return true;
@@ -364,9 +383,26 @@ export class GameRoom {
     this.passDeadlineAt = Date.now() + PASS_MS;
   }
 
+  /** Next player who may pass (≥4 cards), starting after `afterSeatIndex`; fallback to immediate next seat. */
+  private advanceTurnWithoutPass(afterSeatIndex: number): void {
+    const n = this.seats.length;
+    for (let step = 1; step <= n; step++) {
+      const idx = (afterSeatIndex + step) % n;
+      if (this.seats[idx]!.hand.length >= 4) {
+        this.currentTurnPlayerId = this.seats[idx]!.id;
+        this.passDeadlineAt = Date.now() + PASS_MS;
+        return;
+      }
+    }
+    const idx = (afterSeatIndex + 1) % n;
+    this.currentTurnPlayerId = this.seats[idx]!.id;
+    this.passDeadlineAt = Date.now() + PASS_MS;
+  }
+
   /**
-   * Pass one card from sender to the next seat (seat 1→2→…→n→1). Receiver always acts next.
-   * Timeout uses rightmost card index (hand[length-1]).
+   * Pass one card to the next seat (1→2→…→n→1). You must hold at least four cards to pass one.
+   * Next turn: first seat at or after the receiver with four or more cards (usually the receiver).
+   * Timeout uses the rightmost card index (hand[length-1]).
    */
   private executePass(senderId: string, cardIndex: number): void {
     if (this.phase !== "passing" || senderId !== this.currentTurnPlayerId) return;
@@ -378,6 +414,7 @@ export class GameRoom {
     const ri = (si + 1) % n;
     const receiver = this.seats[ri]!;
 
+    if (sender.hand.length < 4) return;
     if (cardIndex < 0 || cardIndex >= sender.hand.length) return;
 
     const [card] = sender.hand.splice(cardIndex, 1);
@@ -396,8 +433,7 @@ export class GameRoom {
     if (this.applyFourCardRules(sender)) return;
     if (this.applyFourCardRules(receiver)) return;
 
-    this.currentTurnPlayerId = receiver.id;
-    this.passDeadlineAt = Date.now() + PASS_MS;
+    this.advanceTurnWithoutPass(si);
 
     if (this.passSinceDeal % n === 0 && this.passSinceDeal > 0) {
       this.round++;
@@ -422,7 +458,7 @@ export class GameRoom {
       // Announce only — do not remove cards; the player still holds all four.
       return false;
     }
-    seat.hand = r.hand;
+    // Pair / mixed "trim" layouts: do not auto-discard — only passing moves cards between players.
     return false;
   }
 
