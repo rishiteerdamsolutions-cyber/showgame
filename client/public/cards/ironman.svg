@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 480" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <radialGradient id="a" cx="50%" cy="50%" r="90%">
+      <stop offset="0%" stop-color="#4a0707"/>
+      <stop offset="55%" stop-color="#290505"/>
+      <stop offset="100%" stop-color="#0f0204"/>
+    </radialGradient>
+    <radialGradient id="bloom" cx="50%" cy="38%" r="50%">
+      <stop offset="0%" stop-color="#fff8e1" stop-opacity="0.75"/>
+      <stop offset="25%" stop-color="#ffca28" stop-opacity="0.45"/>
+      <stop offset="55%" stop-color="#ff5722" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="transparent"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffb300"/>
+      <stop offset="100%" stop-color="#ffecb3"/>
+    </linearGradient>
+    <pattern id="spark" patternUnits="userSpaceOnUse" width="24" height="24">
+      <circle cx="8" cy="7" r="0.85" fill="#fffde7" opacity="0.7"/>
+      <circle cx="18" cy="16" r="0.55" fill="#ffab00" opacity="0.85"/>
+      <circle cx="4" cy="19" r="0.45" fill="#fff" opacity="0.5"/>
+    </pattern>
+    <radialGradient id="vign" cx="50%" cy="50%" r="72%">
+      <stop offset="45%" stop-color="transparent"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.6"/>
+    </radialGradient>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="320" height="480" fill="url(#a)"/>
+  <rect width="320" height="480" fill="url(#spark)" opacity="0.32"/>
+  <ellipse cx="160" cy="205" rx="115" ry="155" fill="url(#bloom)"/>
+  <g fill="none" stroke="url(#gold)" stroke-opacity="0.55" opacity="0.9">
+    <circle cx="160" cy="240" r="142" stroke-width="0.85"/>
+    <circle cx="160" cy="240" r="118" stroke-width="0.6"/>
+    <circle cx="160" cy="240" r="94" stroke-width="0.85"/>
+    <circle cx="160" cy="240" r="70" stroke-width="1.8" filter="url(#glow)"/>
+    <circle cx="160" cy="240" r="46" stroke-width="2.2"/>
+    <circle cx="160" cy="240" r="26" stroke-width="3" opacity="1"/>
+    <ellipse cx="160" cy="240" rx="128" ry="85" opacity="0.35" stroke="#fff"/>
+  </g>
+  <g stroke="#ffcc80" fill="none" stroke-width="1" opacity="0.25" stroke-linecap="round">
+    <path d="M160 120 L230 358 M160 120 L90 358 M90 358 L278 358 M278 358 L42 358"/>
+    <path d="M42 358 L278 358" transform="rotate(72 160 358) translate(0 -130)"/>
+  </g>
+  <rect width="320" height="480" fill="url(#vign)"/>
+</svg>

@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 480" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <radialGradient id="a" cx="50%" cy="50%" r="92%">
+      <stop offset="0%" stop-color="#1b3930"/>
+      <stop offset="45%" stop-color="#0f2818"/>
+      <stop offset="100%" stop-color="#020806"/>
+    </radialGradient>
+    <radialGradient id="bloom" cx="50%" cy="38%" r="52%">
+      <stop offset="0%" stop-color="#a5d6a7" stop-opacity="0.62"/>
+      <stop offset="35%" stop-color="#43a047" stop-opacity="0.32"/>
+      <stop offset="70%" stop-color="#004d40" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="transparent"/>
+    </radialGradient>
+    <linearGradient id="orb" x1="30%" y1="20%" x2="70%" y2="80%">
+      <stop offset="0%" stop-color="#81c784"/>
+      <stop offset="100%" stop-color="#1b5e20"/>
+    </linearGradient>
+    <pattern id="spark" patternUnits="userSpaceOnUse" width="24" height="24">
+      <circle cx="10" cy="8" r="0.92" fill="#e8f5e9" opacity="0.6"/>
+      <circle cx="18" cy="16" r="0.65" fill="#66bb6a" opacity="0.55"/>
+      <circle cx="5" cy="18" r="0.62" fill="#fff" opacity="0.42"/>
+      <circle cx="16" cy="5" r="0.52" fill="#a5d6a7" opacity="0.5"/>
+    </pattern>
+    <radialGradient id="vign" cx="50%" cy="50%" r="71%">
+      <stop offset="48%" stop-color="transparent"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.62"/>
+    </radialGradient>
+    <filter id="gf">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="320" height="480" fill="url(#a)"/>
+  <rect width="320" height="480" fill="url(#spark)" opacity="0.35"/>
+  <ellipse cx="160" cy="206" rx="124" ry="162" fill="url(#bloom)"/>
+  <g fill="none" stroke="url(#orb)" stroke-width="1" opacity="0.55">
+    <ellipse cx="160" cy="242" rx="156" ry="44"/>
+    <ellipse cx="160" cy="232" rx="176" ry="56" opacity="0.38"/>
+    <ellipse cx="160" cy="222" rx="196" ry="68" opacity="0.28"/>
+    <circle cx="160" cy="240" r="130"/>
+    <circle cx="160" cy="240" r="102"/>
+    <circle cx="160" cy="240" r="76"/>
+    <circle cx="160" cy="240" r="50" stroke-width="2"/>
+    <circle cx="160" cy="240" r="30" stroke-width="2.5" filter="url(#gf)" stroke="#c8e6c9"/>
+  </g>
+  <g opacity="0.45" stroke="#a5d6a7" fill="none" stroke-width="0.75">
+    <path d="M20 392 Q116 348 228 394 Q274 392 296 394"/>
+    <path d="M310 392 Q218 362 154 394 Q118 394 106 394 Q78 394 72 394"/>
+    <path opacity="0.65" stroke="#eceff1" d="M0 412 Q158 392 332 394"/>
+    <ellipse cx="160" cy="234" rx="88" ry="64" opacity="0.22" stroke="#fff"/>
+    <ellipse cx="160" cy="226" rx="58" ry="42" opacity="0.42" stroke="#81c784"/>
+  </g>
+  <ellipse cx="160" cy="230" rx="72" ry="112" stroke="#4caf50" stroke-opacity="0.15" stroke-width="14" fill="none"/>
+  <rect width="320" height="480" fill="url(#vign)"/>
+</svg>

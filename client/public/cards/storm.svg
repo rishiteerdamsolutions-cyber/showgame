@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 480" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <radialGradient id="a" cx="50%" cy="44%" r="93%">
+      <stop offset="0%" stop-color="#283593"/>
+      <stop offset="45%" stop-color="#1a237e"/>
+      <stop offset="100%" stop-color="#040818"/>
+    </radialGradient>
+    <radialGradient id="bloom" cx="50%" cy="36%" r="54%">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.78"/>
+      <stop offset="30%" stop-color="#c5cae9" stop-opacity="0.45"/>
+      <stop offset="65%" stop-color="#5c6bc0" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="transparent"/>
+    </radialGradient>
+    <linearGradient id="sky" x1="50%" y1="100%" x2="50%" y2="0%">
+      <stop offset="0%" stop-color="#7986cb" stop-opacity="0.82"/>
+      <stop offset="100%" stop-color="#e8eaf6"/>
+    </linearGradient>
+    <pattern id="spark" patternUnits="userSpaceOnUse" width="16" height="16">
+      <circle cx="6" cy="7" r="0.92" fill="#fff" opacity="0.92"/>
+      <circle cx="12" cy="4" r="0.62" fill="#e8eaf6" opacity="0.7"/>
+      <circle cx="3" cy="13" r="0.55" fill="#9fa8da" opacity="0.6"/>
+    </pattern>
+    <radialGradient id="vign" cx="50%" cy="50%" r="71%">
+      <stop offset="50%" stop-color="transparent"/>
+      <stop offset="100%" stop-color="#010212" stop-opacity="0.55"/>
+    </radialGradient>
+    <filter id="g">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2.5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="320" height="480" fill="url(#a)"/>
+  <rect width="320" height="480" fill="url(#spark)" opacity="0.52"/>
+  <ellipse cx="160" cy="198" rx="128" ry="168" fill="url(#bloom)"/>
+  <g fill="none" stroke="#e8eaf6" opacity="0.35" stroke-width="0.7">
+    <circle cx="160" cy="240" r="152"/>
+    <circle cx="160" cy="240" r="125"/>
+    <circle cx="160" cy="240" r="98"/>
+    <circle cx="160" cy="240" r="70"/>
+    <ellipse cx="160" cy="240" rx="135" ry="88" opacity="0.42"/>
+    <ellipse cx="160" cy="240" rx="90" ry="58" opacity="0.52" stroke="#fff"/>
+  </g>
+  <g stroke="url(#sky)" opacity="0.55" stroke-width="2.4" stroke-linecap="round" fill="none" filter="url(#g)">
+    <path d="M48 188 L138 278 L172 268 L266 392"/>
+    <path opacity="0.45" d="M88 298 L218 392"/>
+    <path opacity="0.6" d="M244 174 L174 348"/>
+    <path opacity="0.5" transform="rotate(12 160 240)" d="M20 392 Q160 292 318 394"/>
+    <path opacity="0.4" transform="rotate(-14 160 240)" d="M20 404 Q140 344 298 392"/>
+  </g>
+  <circle cx="160" cy="222" r="118" stroke="#fff" stroke-opacity="0.12" stroke-width="18" fill="none"/>
+  <rect width="320" height="480" fill="url(#vign)"/>
+</svg>

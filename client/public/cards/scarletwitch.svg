@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 480" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <radialGradient id="a" cx="50%" cy="45%" r="90%">
+      <stop offset="0%" stop-color="#6a0828"/>
+      <stop offset="40%" stop-color="#3d0a28"/>
+      <stop offset="100%" stop-color="#120511"/>
+    </radialGradient>
+    <radialGradient id="bloom" cx="50%" cy="36%" r="56%">
+      <stop offset="0%" stop-color="#ff8a80" stop-opacity="0.65"/>
+      <stop offset="25%" stop-color="#f06292" stop-opacity="0.45"/>
+      <stop offset="55%" stop-color="#880e4f" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="transparent"/>
+    </radialGradient>
+    <linearGradient id="wave" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#ff1744"/>
+      <stop offset="50%" stop-color="#fce4ec"/>
+      <stop offset="100%" stop-color="#ad1457"/>
+    </linearGradient>
+    <pattern id="spark" patternUnits="userSpaceOnUse" width="18" height="18">
+      <circle cx="7" cy="6" r="0.82" fill="#fff" opacity="0.82"/>
+      <circle cx="14" cy="12" r="0.72" fill="#f48fb1" opacity="0.75"/>
+      <circle cx="3" cy="14" r="0.55" fill="#fff" opacity="0.45"/>
+    </pattern>
+    <radialGradient id="vign" cx="50%" cy="50%" r="71%">
+      <stop offset="48%" stop-color="transparent"/>
+      <stop offset="100%" stop-color="#000" stop-opacity="0.6"/>
+    </radialGradient>
+    <filter id="g">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="320" height="480" fill="url(#a)"/>
+  <rect width="320" height="480" fill="url(#spark)" opacity="0.45"/>
+  <ellipse cx="160" cy="192" rx="132" ry="174" fill="url(#bloom)"/>
+  <g fill="none" stroke="url(#wave)" stroke-width="1" opacity="0.55">
+    <circle cx="160" cy="242" r="148"/>
+    <circle cx="160" cy="242" r="120"/>
+    <circle cx="160" cy="242" r="92"/>
+    <circle cx="160" cy="242" r="62" stroke-width="2" filter="url(#g)" opacity="0.75"/>
+    <path d="M8 392 Q92 296 172 392 Q246 296 332 394"/>
+    <path d="M12 418 Q156 296 298 418"/>
+    <ellipse cx="160" cy="234" rx="118" ry="72" opacity="0.38"/>
+    <ellipse cx="160" cy="234" rx="86" ry="52" opacity="0.32"/>
+    <ellipse cx="160" cy="234" rx="56" ry="36" opacity="0.52" stroke="#fff"/>
+  </g>
+  <circle cx="160" cy="226" r="104" stroke="#ff5722" stroke-opacity="0.15" stroke-width="10" fill="none" filter="url(#g)" opacity="0.6"/>
+  <rect width="320" height="480" fill="url(#vign)"/>
+</svg>
