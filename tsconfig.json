@@ -10,8 +10,13 @@
     "noEmit": true,
     "isolatedModules": true,
     "resolveJsonModule": true,
-    "useDefineForClassFields": true
+    "useDefineForClassFields": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["client/src/*"],
+      "@shared/*": ["shared/*"]
+    }
   },
-  "include": ["client", "vite.config.ts"],
+  "include": ["client", "shared", "vite.config.ts"],
   "exclude": ["dist", "node_modules"]
 }

@@ -35,10 +35,14 @@ export interface RoomSnapshot {
   };
   winnerId?: string;
   playAgainIds: string[];
-  /** Players needed to tap Play Again to start the next deal (at least 4, or half the table rounded up for larger games). */
+  /** Everyone seated must tap Play Again before the next countdown (same roster only). */
   playAgainQuorum: number;
   /** Increments on each card pass (for client pass sound). */
   passSinceDeal: number;
+  /** Set once when the first hand is dealt — fixed session size for this room phrase. */
+  sessionPlayersAtLock: number | null;
+  /** How many hands ended with SHOW in this session (same room phrase). */
+  sessionGamesCompleted: number;
 }
 
 const LOBBY_MS = 2 * 60 * 1000;
@@ -194,6 +198,15 @@ export class GameRoom {
 
   passDeadlineAt: number | null = null;
 
+  /** True after the first deal — new joins rejected (existing players may reconnect). */
+  sessionLocked = false;
+
+  /** Recorded on first deal — equals seats.length when the session locked. */
+  sessionPlayersAtLock: number | null = null;
+
+  /** Incremented each time a hand ends with SHOW (phase → game_over). */
+  sessionGamesCompleted = 0;
+
   generation = 1;
 
   lastBroadcast: RoomSnapshot["lastEvent"];
@@ -204,6 +217,11 @@ export class GameRoom {
   }
 
   addPlayer(socketId: string, displayName: string): PlayerSeat {
+    if (this.sessionLocked) {
+      throw new Error(
+        "This room is already in session — you cannot join. Create a new room phrase for additional players.",
+      );
+    }
     const id = newId();
     const seat: PlayerSeat = {
       id,
@@ -244,10 +262,9 @@ export class GameRoom {
     return this.reconnectSeat(playerId, socketId);
   }
 
-  /** Enough \"Play again\" taps to start the next lobby (not everyone must tap on large tables). */
+  /** Everyone still seated must opt in to play again — keeps the full table together. */
   private playAgainQuorum(): number {
-    const n = this.seats.length;
-    return Math.max(MIN_PLAYERS, Math.ceil(n / 2));
+    return this.seats.length;
   }
 
   requestPlayAgain(playerId: string): boolean {
@@ -262,14 +279,11 @@ export class GameRoom {
   startNextMatchIfReady(): boolean {
     if (this.phase !== "game_over") return false;
     if (this.playAgainIds.size < this.playAgainQuorum()) return false;
-    const active = this.seats.filter((s) => this.playAgainIds.has(s.id));
-    if (active.length < MIN_PLAYERS) return false;
+    if (this.seats.length < MIN_PLAYERS) return false;
 
-    this.seats = active.map((s) => ({
-      ...s,
-      socketId: s.socketId,
-      hand: [],
-    }));
+    for (const s of this.seats) {
+      s.hand = [];
+    }
     this.playAgainIds.clear();
     this.winnerId = undefined;
     this.winnerName = undefined;
@@ -392,6 +406,10 @@ export class GameRoom {
     this.passSinceDeal = 0;
     this.currentTurnPlayerId = this.seats[this.starterIndex]!.id;
     this.passDeadlineAt = Date.now() + PASS_MS;
+    this.sessionLocked = true;
+    if (this.sessionPlayersAtLock === null) {
+      this.sessionPlayersAtLock = n;
+    }
   }
 
   /** Next player who may pass (≥4 cards), starting after `afterSeatIndex`; fallback to immediate next seat. */
@@ -476,6 +494,7 @@ export class GameRoom {
   private endGame(winnerSeatId: string, winningCardName: string): void {
     this.winnerId = winnerSeatId;
     this.winnerName = winningCardName;
+    this.sessionGamesCompleted += 1;
     for (const s of this.seats) s.hand = [];
     this.phase = "game_over";
     this.currentTurnPlayerId = null;
@@ -515,6 +534,8 @@ export class GameRoom {
       playAgainIds: [...this.playAgainIds],
       playAgainQuorum: this.playAgainQuorum(),
       passSinceDeal: this.passSinceDeal,
+      sessionPlayersAtLock: this.sessionPlayersAtLock,
+      sessionGamesCompleted: this.sessionGamesCompleted,
     };
   }
 }

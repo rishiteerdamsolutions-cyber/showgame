@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import {
   announceShow,
+  ensureAudioUnlocked,
   getEffectiveSoundLevel,
+  waitForShowCelebration,
   getSoundMuted,
   getSoundVolume,
   playCardPassSound,
@@ -13,6 +15,14 @@ import {
   setSoundVolume,
   stopBackgroundMusic,
 } from "./audio";
+import {
+  CARD_FACE_LABELS,
+  labelForCardFace,
+  MARVEL_CARD_NAMES,
+  slugForCardFace,
+} from "@shared/cardNames";
+
+const CARD_LIST_BLURB = MARVEL_CARD_NAMES.map((t) => CARD_FACE_LABELS[t]).join(" · ");
 
 type CardModel = { id: string; name: string };
 
@@ -32,6 +42,8 @@ type RoomPayload = {
   playAgainIds: string[];
   playAgainQuorum: number;
   passSinceDeal: number;
+  sessionPlayersAtLock: number | null;
+  sessionGamesCompleted: number;
 };
 
 type ServerState = {
@@ -77,6 +89,7 @@ export default function App(): JSX.Element {
 
   const [flashOverlay, setFlashOverlay] = useState<{ title: string; body: string } | null>(null);
   const flashKeyRef = useRef<string | null>(null);
+  const celebrationIdRef = useRef(0);
   const [, setSoundUi] = useState(0);
   const prevPassSinceRef = useRef(0);
   const prevPassGenRef = useRef<number | null>(null);
@@ -125,12 +138,16 @@ export default function App(): JSX.Element {
       return;
     }
     const cardName = ev.name ?? "";
+    const celId = ++celebrationIdRef.current;
     setFlashOverlay({
       title: "SHOW!",
-      body: `${playerName} wins — Winner`,
+      body: `${playerName} wins with four ${labelForCardFace(cardName)}`,
     });
-    announceShow(cardName, playerName);
-    window.setTimeout(() => setFlashOverlay(null), 4000);
+    void (async () => {
+      await ensureAudioUnlocked();
+      await waitForShowCelebration(announceShow(cardName, playerName));
+      if (celebrationIdRef.current === celId) setFlashOverlay(null);
+    })();
   }, [snapshot]);
 
   const [tick, setTick] = useState(0);
@@ -198,12 +215,12 @@ export default function App(): JSX.Element {
     if (!joined) stopBackgroundMusic();
   }, [joined]);
 
-  const join = useCallback(() => {
+  const join = useCallback(async () => {
     if (MISSING_REALTIME || !socketRef.current) {
       setError("Deploy error: set VITE_SOCKET_URL in Vercel to your Game API URL.");
       return;
     }
-    primeAudioPlayback();
+    await ensureAudioUnlocked();
     setError(null);
     const pid = window.localStorage.getItem(LS_PID);
     socketRef.current.emit("join", { roomName, playerName: name, ...(pid ? { playerId: pid } : {}) });
@@ -290,6 +307,10 @@ export default function App(): JSX.Element {
   const playAgainCount = snapshot?.room.playAgainIds?.length ?? 0;
   const soundOn = getEffectiveSoundLevel() > 0;
 
+  const sessionGamesCompleted = snapshot?.room.sessionGamesCompleted ?? 0;
+  const sessionPlayersAtLock = snapshot?.room.sessionPlayersAtLock ?? null;
+  const rosterLocked = sessionPlayersAtLock != null;
+
   return (
     <div className={`app ${isPlaying ? "app--playing" : ""}`}>
       {/* ── full-screen flash: CARD SHOW / SHOW ── */}
@@ -301,6 +322,44 @@ export default function App(): JSX.Element {
           </div>
         </div>
       )}
+
+      {/* ── session dashboard (always visible: join, lobby, in-game, game over) ── */}
+      <section className="session-dash" aria-label="Session dashboard">
+        <div className="session-dash-header">
+          <span className="session-dash-label">Session</span>
+          {joined && !snapshot ? (
+            <span className="session-dash-preview">Connecting…</span>
+          ) : joined && snapshot ? (
+            <>
+              <span className="session-dash-room" title="Room phrase">
+                {roomName}
+              </span>
+              <span className="session-dash-div" aria-hidden="true">
+                ·
+              </span>
+              <span className="session-dash-stat">
+                Roster:{" "}
+                <strong>
+                  {rosterLocked
+                    ? `${sessionPlayersAtLock} player${sessionPlayersAtLock !== 1 ? "s" : ""} (locked)`
+                    : `${playerCount} in lobby — locks at first deal`}
+                </strong>
+              </span>
+              <span className="session-dash-div" aria-hidden="true">
+                ·
+              </span>
+              <span className="session-dash-stat">
+                Games finished: <strong>{sessionGamesCompleted}</strong>
+              </span>
+            </>
+          ) : !joined ? (
+            <span className="session-dash-preview">
+              Join a room to see roster size and how many games your group has finished. Extra players?{" "}
+              <strong>Use a new room phrase</strong> — sessions already in progress stay closed.
+            </span>
+          ) : null}
+        </div>
+      </section>
 
       {/* ── deploy error banner ── */}
       {/* Sound — visible after entering arena; unlocking happens on that tap */}
@@ -350,7 +409,7 @@ export default function App(): JSX.Element {
         <>
           <header>
             <h1>SHOW</h1>
-            <p className="sub">Family card arena — collect four matching name cards and call SHOW.</p>
+            <p className="sub">Marvel card arena — collect four matching hero cards and call SHOW.</p>
           </header>
           <section className="panel">
             <div className="row">
@@ -368,8 +427,8 @@ export default function App(): JSX.Element {
             </div>
             {error && <p className="error">{error}</p>}
             <p className="meta" style={{ marginTop: 16 }}>
-              Cards: RAMA · SITA · LAKSHMAN · HANUMAN · HE-MAN · SUPERMAN · JAMBA · VAALI · RAVAN · JETAYU
-              &nbsp;·&nbsp;minimum <strong>4 players</strong> · max 10 · same room phrase reunites the table.
+              Cards: {CARD_LIST_BLURB}
+              &nbsp;·&nbsp;minimum <strong>4 players</strong> · max 10 · one room phrase = one session; add new people with a <strong>new</strong> room name.
             </p>
           </section>
         </>
@@ -472,12 +531,12 @@ export default function App(): JSX.Element {
                   <button
                     key={card.id}
                     type="button"
-                    className={`card5 ${isMyTurn ? "card5--tappable" : ""}`}
+                    className={`card5 card5--${slugForCardFace(card.name)} ${isMyTurn ? "card5--tappable" : ""}`}
                     disabled={!isMyTurn}
                     onClick={() => onPickCard(slot)}
                     aria-label={isMyTurn ? `Pass ${card.name}` : card.name}
                   >
-                    <span className="card5-name">{card.name}</span>
+                    <span className="card5-name">{labelForCardFace(card.name)}</span>
                     {isMyTurn && <span className="card5-hint">tap to pass</span>}
                   </button>
                 );
@@ -508,7 +567,7 @@ export default function App(): JSX.Element {
             Play again
           </button>
           <p className="meta" style={{ marginTop: 10 }}>
-            Ready: <strong>{playAgainCount}</strong> / <strong>{playAgainQuorum}</strong> players — next round starts when enough people tap (large tables don&apos;t need everyone).
+            Ready: <strong>{playAgainCount}</strong> / <strong>{playAgainQuorum}</strong> — everyone here must tap Play Again. New friends need a <strong>new room phrase</strong> (see Session bar).
           </p>
 
           <p className="meta" style={{ marginTop: 14 }}>

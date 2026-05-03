@@ -61,8 +61,9 @@ function publicUrl(filename: string): string {
 const SILENT_WAV =
   "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
 
-let primed = false;
-let priming = false;
+/** HTMLAudio unlock must happen in a user gesture; we record success here. */
+let audioUnlocked = false;
+let unlockInFlight: Promise<void> | null = null;
 
 /** Looping background music element */
 let bgmEl: HTMLAudioElement | null = null;
@@ -101,77 +102,74 @@ if (typeof window !== "undefined") {
   window.addEventListener(SOUND_SETTINGS_EVENT, () => syncBackgroundMusic());
 }
 
-export function primeAudioPlayback(): void {
-  if (typeof window === "undefined" || primed || priming) return;
-  priming = true;
-
+async function resumeWebAudio(): Promise<void> {
   const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (AC) {
-    try {
-      const ctx = new AC();
-      void ctx.resume();
-      const osc = ctx.createOscillator();
-      const g = ctx.createGain();
-      g.gain.value = 0;
-      osc.connect(g);
-      g.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + 0.02);
-      void ctx.close();
-    } catch {
-      /* ignore */
-    }
+  if (!AC) return;
+  try {
+    const ctx = new AC();
+    await ctx.resume();
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    osc.connect(g);
+    g.connect(ctx.destination);
+    const t0 = ctx.currentTime;
+    osc.start(t0);
+    osc.stop(t0 + 0.02);
+    await ctx.close();
+  } catch {
+    /* ignore */
   }
+}
 
-  const silent = new Audio(SILENT_WAV);
-  applyOutputVolume(silent);
-  if (silent.volume === 0) silent.volume = 0.01;
-  void silent
-    .play()
-    .then(() => {
+/**
+ * Unlocks HTMLAudio + WebAudio after a user gesture. Safe to call repeatedly; resolves immediately once unlocked.
+ */
+export async function ensureAudioUnlocked(): Promise<void> {
+  if (typeof window === "undefined") return;
+  if (audioUnlocked) return;
+  if (unlockInFlight) return unlockInFlight;
+
+  unlockInFlight = (async () => {
+    await resumeWebAudio();
+
+    const silent = new Audio(SILENT_WAV);
+    silent.playsInline = true;
+    silent.volume = 0.0001;
+    try {
+      await silent.play();
       silent.pause();
-      silent.src = "";
+      silent.removeAttribute("src");
       silent.load();
+      audioUnlocked = true;
+    } catch {
+      /* Next user gesture can retry */
+    }
 
-      const warmFiles = [
-        "SHOW.mp3",
-        "WINNER.mp3",
-        "CARDPASSSOUND.mp3",
-        "COUNTDOWN.mp3",
-        "showgamebgmusic.mp3",
-      ];
-      for (const file of warmFiles) {
-        const w = new Audio(publicUrl(file));
-        w.playsInline = true;
-        const eff = getEffectiveSoundLevel();
-        w.volume = eff > 0 ? Math.max(0.001, eff * 0.001) : 0;
-        void w
-          .play()
-          .then(() => {
-            w.pause();
-            w.currentTime = 0;
-            applyOutputVolume(w);
-          })
-          .catch(() => {});
-      }
-
-      primed = true;
-      priming = false;
+    if (audioUnlocked) {
       startBackgroundMusic();
-    })
-    .catch(() => {
-      priming = false;
-    });
+    }
+  })().finally(() => {
+    unlockInFlight = null;
+  });
+
+  return unlockInFlight;
+}
+
+/** Fire-and-forget unlock (use inside click handlers). */
+export function primeAudioPlayback(): void {
+  void ensureAudioUnlocked();
 }
 
 export async function resumeAudio(): Promise<void> {
-  primeAudioPlayback();
+  await ensureAudioUnlocked();
 }
 
 function playMp3(filename: string): void {
   if (getEffectiveSoundLevel() <= 0) return;
   const a = new Audio(publicUrl(filename));
   a.playsInline = true;
+  a.preload = "auto";
   applyOutputVolume(a);
   void a.play().catch((err) => {
     if (import.meta.env.DEV) console.warn("[audio]", filename, err);
@@ -211,30 +209,103 @@ function playCountdownBeep(level: number): void {
 }
 
 export function playCardPassSound(): void {
-  playMp3("CARDPASSSOUND.mp3");
+  void ensureAudioUnlocked().then(() => playMp3("CARDPASSSOUND.mp3"));
 }
 
-/** Disabled — re-enable when bringing CARD SHOW overlay + CARDSHOW.mp3 back. */
 export function announceCardShow(_threeOfAKindName?: string): void {
   void _threeOfAKindName;
 }
 
-export function announceShow(_winningCardName?: string, _winnerName?: string): void {
-  if (getEffectiveSoundLevel() <= 0) return;
-  const show = new Audio(publicUrl("SHOW.mp3"));
-  show.playsInline = true;
-  applyOutputVolume(show);
-  show.addEventListener("ended", () => {
-    if (getEffectiveSoundLevel() <= 0) return;
-    const winner = new Audio(publicUrl("WINNER.mp3"));
-    winner.playsInline = true;
-    applyOutputVolume(winner);
-    void winner.play().catch((err) => {
-      if (import.meta.env.DEV) console.warn("[audio] WINNER", err);
+const SHOW_CELEBRATION_MIN_MS = 5000;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Load and play one MP3 to completion. Uses loadedmetadata + play for broad browser support.
+ */
+function playOneMp3ToEnd(filename: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const eff = getEffectiveSoundLevel();
+    if (eff <= 0) {
+      resolve();
+      return;
+    }
+
+    const a = new Audio();
+    a.preload = "auto";
+    a.playsInline = true;
+    a.src = publicUrl(filename);
+
+    const finishOk = () => {
+      a.removeEventListener("ended", onEnded);
+      a.removeEventListener("error", onErr);
+      resolve();
+    };
+
+    const finishBad = () => {
+      a.removeEventListener("ended", onEnded);
+      a.removeEventListener("error", onErr);
+      reject(new Error(`audio: ${filename}`));
+    };
+
+    const onEnded = () => finishOk();
+    const onErr = () => finishBad();
+
+    a.addEventListener("ended", onEnded);
+    a.addEventListener("error", onErr);
+
+    let started = false;
+    const startOnce = () => {
+      if (started) return;
+      started = true;
+      applyOutputVolume(a);
+      void a.play().catch(() => finishBad());
+    };
+
+    a.addEventListener("canplay", () => startOnce(), { once: true });
+    a.load();
+    /* Cached assets sometimes skip `canplay` until after sync load. */
+    queueMicrotask(() => {
+      if (a.readyState >= 2) startOnce();
     });
   });
-  void show.play().catch((err) => {
-    if (import.meta.env.DEV) console.warn("[audio] SHOW", err);
-    playMp3("WINNER.mp3");
-  });
+}
+
+/**
+ * Plays SHOW.mp3 then WINNER.mp3. Resolves when WINNER ends (or both fail after unlock attempt).
+ */
+export async function announceShow(_winningCardName?: string, _winnerName?: string): Promise<void> {
+  void _winningCardName;
+  void _winnerName;
+
+  const eff = getEffectiveSoundLevel();
+  if (eff <= 0) {
+    await delay(SHOW_CELEBRATION_MIN_MS);
+    return;
+  }
+
+  await ensureAudioUnlocked();
+
+  try {
+    await playOneMp3ToEnd("SHOW.mp3");
+  } catch (e) {
+    if (import.meta.env.DEV) console.warn("[audio] SHOW", e);
+  }
+
+  try {
+    await playOneMp3ToEnd("WINNER.mp3");
+  } catch (e) {
+    if (import.meta.env.DEV) console.warn("[audio] WINNER", e);
+  }
+}
+
+/** Wait until celebration audio finishes, keeping overlay at least `SHOW_CELEBRATION_MIN_MS`. */
+export async function waitForShowCelebration(announcePromise: Promise<void>): Promise<void> {
+  const t0 = Date.now();
+  await announcePromise;
+  const elapsed = Date.now() - t0;
+  const pad = Math.max(0, SHOW_CELEBRATION_MIN_MS - elapsed);
+  if (pad > 0) await delay(pad);
 }
